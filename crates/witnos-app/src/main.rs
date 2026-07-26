@@ -220,7 +220,8 @@ fn main() {
     tauri::Builder::default()
         .setup(|app| {
             let handle =
-                tauri::async_runtime::block_on(witnos_server::start(&witnos_home()))?;
+                tauri::async_runtime::block_on(witnos_server::start(&witnos_home()))
+                    .map_err(|e| e as Box<dyn std::error::Error>)?;
             app.manage(App(handle.state.clone()));
             Ok(())
         })
