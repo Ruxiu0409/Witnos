@@ -14,3 +14,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Plain HTTP to 127.0.0.1 only — no TLS, keeps the bin tiny.
 ureq = { version = "2", default-features = false, features = ["json"] }
+
+[dev-dependencies]
+witnos-core = { path = "../witnos-core" }
+witnos-server = { path = "../witnos-server" }
+tokio = { version = "1", features = ["rt-multi-thread"] }

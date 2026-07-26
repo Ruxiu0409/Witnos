@@ -236,6 +236,13 @@ pub struct Goal {
     pub evidence: Vec<Evidence>,
     pub events: Vec<Event>,
     pub created_at: UnixSeconds,
+    /// The project directory being watched (where the armed marker lives).
+    #[serde(default)]
+    pub project_dir: Option<String>,
+    /// Watching = the armed marker is maintained in `project_dir` and the
+    /// Stop gate fails closed there.
+    #[serde(default)]
+    pub watching: bool,
 }
 
 impl Goal {

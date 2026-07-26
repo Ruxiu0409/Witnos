@@ -62,6 +62,7 @@ pub fn run() -> ExitCode {
         .unwrap_or(paths::Marker {
             goal_id: "unknown".into(),
             contract_version: 0,
+            agent_synced_version: 0,
         });
 
     match ask_core(&marker, &input) {

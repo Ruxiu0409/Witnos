@@ -12,6 +12,11 @@ pub const DELIVERED_REL: &str = ".witnos/delivered.json";
 pub struct Marker {
     pub goal_id: String,
     pub contract_version: u64,
+    /// Mirrored so the delivery channel can compute its delta baseline
+    /// without touching the network: the agent has demonstrably seen
+    /// everything up to the version it last reconciled to.
+    #[serde(default)]
+    pub agent_synced_version: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]

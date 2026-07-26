@@ -46,8 +46,14 @@ fn try_deliver() -> Option<()> {
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
-    let since = delivered.get(&session).copied().unwrap_or(0);
-    if since == marker.contract_version {
+    // Baseline = the newest version the agent has provably seen: what this
+    // channel already injected, or what the agent declared via reconcile.
+    let since = delivered
+        .get(&session)
+        .copied()
+        .unwrap_or(0)
+        .max(marker.agent_synced_version);
+    if since >= marker.contract_version {
         return Some(()); // unchanged: zero-cost silent pass
     }
 

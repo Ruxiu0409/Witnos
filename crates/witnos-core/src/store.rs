@@ -118,6 +118,8 @@ impl Store {
             evidence: Vec::new(),
             events: Vec::new(),
             created_at: now(),
+            project_dir: None,
+            watching: false,
         };
         persist(&self.dir, &goal)?;
         self.write().insert(goal.id.clone(), goal.clone());
@@ -150,6 +152,13 @@ impl Store {
             for new in items {
                 let class = new.class.unwrap_or(Class::Subjective);
                 validate_class(&class, actor)?;
+                if actor == Actor::Agent && new.origin.is_user_authored() {
+                    return Err(StoreError::Invalid(
+                        "an agent cannot lay items with a user origin — that would corrupt the \
+                         core-bet instrumentation"
+                            .into(),
+                    ));
+                }
                 goal.contract_version += 1;
                 let v = goal.contract_version;
                 let id = new_id();
@@ -449,6 +458,21 @@ impl Store {
                 goal.status = GoalStatus::AwaitingRulings;
             }
             Ok(())
+        })
+    }
+
+    pub fn set_watch(
+        &self,
+        goal_id: &str,
+        project_dir: Option<String>,
+        watching: bool,
+    ) -> Result<Goal, StoreError> {
+        self.mutate(goal_id, |goal| {
+            if project_dir.is_some() {
+                goal.project_dir = project_dir;
+            }
+            goal.watching = watching;
+            Ok(goal.clone())
         })
     }
 

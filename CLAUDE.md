@@ -4,11 +4,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-**Pre-prototype / concept-design stage. There is no product code yet** — the repository contains documentation: `README.md` (the canonical design document, written in Traditional Chinese — keep it in Traditional Chinese when editing) and this file, plus `spike/` (pre-implementation verification harnesses and findings; currently the 2026-07-26 Claude Code hooks spike). There is no build system, no tests, and no dependencies. It is a git repository (since 2026-07-26).
+**v1 implementation in progress (started 2026-07-26); no GUI shell yet.** The repository contains the design docs — `README.md` (the canonical design document, written in Traditional Chinese — keep it in Traditional Chinese when editing) and this file — plus `docs/schema-v1.md` (the contract schema + write-path design), `spike/` (pre-implementation verification harnesses; the 2026-07-26 Claude Code hooks spike), and a Cargo workspace:
+
+- `crates/witnos-core` — domain types, write-time domain rules, the per-goal JSON store, the gate's release condition
+- `crates/witnos-server` — the axum core as a **lib** (the future Tauri shell embeds it; `examples/serve.rs` runs it headless until then)
+- `crates/witnos-cli` — the headless bin **`witnos`**: both hooks (Stop gate fail-closed / PostToolUse delivery fail-open), arm/disarm, and the agent-facing contract subcommands
+
+Missing still: the Tauri shell + TS frontend, `witnos init` (hook installation), the UserPromptSubmit goal-binding hook, and the subjective-judgement prompt hook.
 
 This file is the English operating distillation of the README for Claude Code. The two are in sync (last verified 2026-07-26; the "Stack decision (v1)" section lives in the README as 「v1 技術選型（已定）」). When a decision is added or changed in one, back-port it to the other.
 
-When implementation starts, update this file with the actual build/lint/test commands. Until then, the design constraints below are the substance of the project.
+Build/lint/test commands: see "Development commands" below. The design constraints below remain the substance of the project — check every implementation decision against them.
+
+## Development commands
+
+Rust toolchain via rustup; make sure `~/.cargo/bin` is on PATH.
+
+- `cargo test --workspace` — build + all tests (core unit tests, gate-CLI e2e matrix, the full-loop milestone test)
+- `cargo test -p witnos-cli --test full_loop` — the whole-v1-loop e2e only
+- `cargo test -p witnos-core <name-filter>` — run a single test by name
+- `cargo clippy --workspace --all-targets` — lint; keep it at zero warnings
+- `cargo build --release -p witnos-cli` — produces the `witnos` bin at `target/release/witnos`
+- `cargo run -p witnos-server --example serve` — run the core headless (binds an ephemeral 127.0.0.1 port, writes `$WITNOS_HOME/endpoint.json`, default `~/.witnos`; Ctrl-C = graceful stop, removes armed markers)
 
 ## What Witnos is
 

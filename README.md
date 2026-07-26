@@ -4,7 +4,7 @@
 
 讓 AI coding agent 的「驗證」這一步從黑盒變透明、且能由人**即時協作編輯**的工具。
 
-**狀態：概念設計階段（pre-prototype）。本檔記錄設計脈絡與待驗證假設，尚未開始實作。**（2026-07-26：動工前置的 hooks 行為 spike 已完成，見 `spike/hooks-2026-07-26/`。）
+**狀態：v1 實作進行中（2026-07-26 動工）。** 本檔記錄設計脈絡與待驗證假設。已落地：hooks 行為 spike（`spike/hooks-2026-07-26/`）、契約 schema（`docs/schema-v1.md`）、Rust workspace——`witnos-core`（型別／store／放行條件）、`witnos-server`（axum 核心，lib 形式、待 GUI 外殼內嵌）、headless bin `witnos`（雙 hook＋agent 子命令）。未動工：Tauri 外殼與前端、`witnos init`、UserPromptSubmit 綁定 hook、主觀判斷 prompt hook。開發指令見 `CLAUDE.md`。
 
 ---
 

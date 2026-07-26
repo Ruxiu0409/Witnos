@@ -104,10 +104,10 @@ block 的 reason **永遠是 delta**：缺哪幾條、哪幾條證據 stale、�
 |---|---|---|
 | `~/.witnos/goals/<goal-id>.json` | 一目標一檔（serde-JSON，core 行程內 `RwLock` 單寫者） | core |
 | `~/.witnos/endpoint.json` | `{port, token}`，mode 0600 | core（啟動時） |
-| 專案 `.witnos/armed.json` | `{goal_id, contract_version}` | core：開始盯時寫入、每次 bump 鏡寫、優雅停止移除 |
+| 專案 `.witnos/armed.json` | `{goal_id, contract_version, agent_synced_version}` | core：開始盯時寫入、每次 bump 與每次 reconcile 鏡寫、優雅停止移除（`watching` 留 true，重啟時重新上膛） |
 | 專案 `.witnos/delivered.json` | `{session_id: version}`（送信通道「上次注入到第幾版」） | `witnos hook post-tool-use` 自己寫（純本地，不經網路） |
 
-送信通道的零成本判斷：比對 `armed.json.contract_version` 與 `delivered.json[session_id]`，相等 → 靜默放行，不碰網路。
+送信通道的零成本判斷（純本地）：delta 基準 = `max(delivered[session], armed.agent_synced_version)`——agent 可證明已看過的最新版本；基準 ≥ `armed.contract_version` → 靜默放行，不碰網路。（若只用 delivered 起算，會把 agent 已 reconcile 過的條目整批重灌，違反「注入永遠是 delta」。）
 
 ## HTTP API（core；`127.0.0.1` 臨時 port ＋ bearer token）
 

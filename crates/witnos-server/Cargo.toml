@@ -1,0 +1,16 @@
+[package]
+name = "witnos-server"
+version.workspace = true
+edition.workspace = true
+
+# The core's HTTP surface as a library: the future Tauri shell embeds it
+# (tokio::spawn on startup); `examples/serve.rs` runs it headless for
+# dogfooding until the shell exists. Not a product bin target.
+
+[dependencies]
+witnos-core = { path = "../witnos-core" }
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
