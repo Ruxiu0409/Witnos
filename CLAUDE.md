@@ -20,12 +20,14 @@ Build/lint/test commands: see "Development commands" below. The design constrain
 
 Rust toolchain via rustup; make sure `~/.cargo/bin` is on PATH.
 
-- `cargo test --workspace` — build + all tests (core unit tests, gate-CLI e2e matrix, the full-loop milestone test)
+- `cargo test --workspace --exclude witnos-app` — the light loop: all tests (core unit tests, gate-CLI e2e matrix, the full-loop milestone test) without compiling the Tauri stack
+- `cargo test --workspace` — everything incl. the GUI shell build (heavy: the tauri dependency tree needs several GB of target/ space)
 - `cargo test -p witnos-cli --test full_loop` — the whole-v1-loop e2e only
 - `cargo test -p witnos-core <name-filter>` — run a single test by name
 - `cargo clippy --workspace --all-targets` — lint; keep it at zero warnings
 - `cargo build --release -p witnos-cli` — produces the `witnos` bin at `target/release/witnos`
 - `cargo run -p witnos-server --example serve` — run the core headless (binds an ephemeral 127.0.0.1 port, writes `$WITNOS_HOME/endpoint.json`, default `~/.witnos`; Ctrl-C = graceful stop, removes armed markers)
+- GUI app: `cd ui && npm install && npm run build` (frontendDist must exist before the Rust build), then `cargo run -p witnos-app`
 
 ## What Witnos is
 
