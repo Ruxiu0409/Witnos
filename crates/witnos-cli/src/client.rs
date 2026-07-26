@@ -66,6 +66,16 @@ impl Ctx {
     }
 }
 
+/// For commands that must work without an armed marker (e.g. `goal new`).
+pub fn post_raw(ep: &Endpoint, path: &str, body: Value) -> Result<Value, String> {
+    finish(
+        agent()
+            .post(&format!("http://127.0.0.1:{}{}", ep.port, path))
+            .set("Authorization", &format!("Bearer {}", ep.token))
+            .send_json(body),
+    )
+}
+
 fn finish(resp: Result<ureq::Response, ureq::Error>) -> Result<Value, String> {
     match resp {
         Ok(r) => r

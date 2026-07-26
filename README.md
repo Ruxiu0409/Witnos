@@ -4,7 +4,7 @@
 
 讓 AI coding agent 的「驗證」這一步從黑盒變透明、且能由人**即時協作編輯**的工具。
 
-**狀態：v1 實作進行中（2026-07-26 動工）。** 本檔記錄設計脈絡與待驗證假設。已落地：hooks 行為 spike（`spike/hooks-2026-07-26/`）、契約 schema（`docs/schema-v1.md`）、Rust workspace——`witnos-core`（型別／store／放行條件）、`witnos-server`（axum 核心，lib 形式、待 GUI 外殼內嵌）、headless bin `witnos`（雙 hook＋agent 子命令）。未動工：Tauri 外殼與前端、`witnos init`、UserPromptSubmit 綁定 hook、主觀判斷 prompt hook。開發指令見 `CLAUDE.md`。
+**狀態：v1 實作進行中（2026-07-26 動工）。** 本檔記錄設計脈絡與待驗證假設。已落地：hooks 行為 spike（`spike/hooks-2026-07-26/`）、契約 schema（`docs/schema-v1.md`）、Rust workspace——`witnos-core`（型別／store／放行條件）、`witnos-server`（axum 核心，lib 形式、待 GUI 外殼內嵌）、headless bin `witnos`（雙 hook＋agent 子命令）。未動工：Tauri 外殼與前端、主觀判斷 prompt hook。（`witnos init`、UserPromptSubmit 綁定＋協議注入 hook、`witnos goal new` 已落地；契約書寫規範由 UserPromptSubmit hook 每 session 注入一次，不寫進任何檔案。）開發指令見 `CLAUDE.md`。
 
 ---
 

@@ -190,6 +190,28 @@ pub async fn unwatch(State(state): State<Arc<AppState>>, Path(id): Path<String>)
     }
 }
 
+#[derive(Deserialize)]
+pub struct BindReq {
+    pub session_id: String,
+    #[serde(default = "default_agent")]
+    pub agent: String,
+}
+
+fn default_agent() -> String {
+    "unknown".to_string()
+}
+
+pub async fn bind_session(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<BindReq>,
+) -> Response {
+    match state.store.bind_session(&id, &req.agent, &req.session_id) {
+        Ok(()) => Json(json!({"ok": true})).into_response(),
+        Err(e) => err(e),
+    }
+}
+
 // ---------- contract ----------
 
 pub async fn contract(

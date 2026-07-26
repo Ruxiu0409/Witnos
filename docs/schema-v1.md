@@ -106,6 +106,7 @@ block 的 reason **永遠是 delta**：缺哪幾條、哪幾條證據 stale、�
 | `~/.witnos/endpoint.json` | `{port, token}`，mode 0600 | core（啟動時） |
 | 專案 `.witnos/armed.json` | `{goal_id, contract_version, agent_synced_version}` | core：開始盯時寫入、每次 bump 與每次 reconcile 鏡寫、優雅停止移除（`watching` 留 true，重啟時重新上膛） |
 | 專案 `.witnos/delivered.json` | `{session_id: version}`（送信通道「上次注入到第幾版」） | `witnos hook post-tool-use` 自己寫（純本地，不經網路） |
+| 專案 `.witnos/instructed.json` | `{session_id: unix_ts}`（協議已注入過的 session） | `witnos hook user-prompt-submit` 自己寫（純本地） |
 
 送信通道的零成本判斷（純本地）：delta 基準 = `max(delivered[session], armed.agent_synced_version)`——agent 可證明已看過的最新版本；基準 ≥ `armed.contract_version` → 靜默放行，不碰網路。（若只用 delivered 起算，會把 agent 已 reconcile 過的條目整批重灌，違反「注入永遠是 delta」。）
 
@@ -119,15 +120,16 @@ block 的 reason **永遠是 delta**：缺哪幾條、哪幾條證據 stale、�
 | `PATCH /goals/{id}/items/{iid}` | 更新詮釋、oracle 結果回報等 |
 | `POST /goals/{id}/evidence` | 附證據 |
 | `POST /goals/{id}/reconcile` | `{session_id, to_version, ...}` → 更新 `agent_synced_version` |
+| `POST /goals/{id}/sessions` | 綁定 session（UserPromptSubmit hook 用，best-effort） |
 | `POST /goals/{id}/events` | UI 回報 drill_down、ruling |
 
 ## Agent 寫入路徑（本次決定）
 
 **走同一支 headless bin 的子命令，agent 用 Bash 呼叫。** 理由：能跑 shell 指令是所有 coding agent 的最大公約數（Codex 也只有 command hook）；endpoint／token 的處理封裝在 bin 內，prompt 端完全不碰憑證；與「單一語言、單一 repo 承重」一致。MCP 之類的整合等 roadmap 第 4 步（agent-agnostic schema 抽象）時再議。
 
-Agent 面向：`witnos contract show [--since N]`／`witnos item lay`（stdin JSON、batch）／`witnos item interpret <id>`／`witnos evidence add <item-id>`（stdin JSON）／`witnos reconcile --to N`
-Hook 入口：`witnos hook stop`／`witnos hook post-tool-use`
-人面向：`witnos init`／`witnos arm <goal-id>`／`witnos disarm`／`witnos status`
+Agent 面向：`witnos contract show [--since N]`／`witnos item lay [--blindspot]`（stdin JSON、batch；origin 由 CLI 蓋章，agent 不能自稱 user 出身）／`witnos item interpret <id>`／`witnos evidence add <item-id>`（stdin JSON，自動蓋 git workspace 指紋）／`witnos oracle report <id> --passed|--failed`／`witnos reconcile --to N`
+Hook 入口：`witnos hook stop`／`witnos hook post-tool-use`／`witnos hook user-prompt-submit`（綁 session＋每 session 注入一次契約書寫協議，fail open）
+人面向：`witnos init`（把三個 hook 冪等合併進專案 `.claude/settings.json`）／`witnos goal new <title>`（建目標＋盯當前專案；UI 未建前的 dogfood 代用品）／`witnos arm <goal-id>`／`witnos disarm`／`witnos status`
 
 ### bin 命名修正（對設計文件的小修）
 

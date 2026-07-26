@@ -233,6 +233,46 @@ pub fn reconcile(args: &[String]) -> ExitCode {
     }
 }
 
+/// Dogfood substitute for the missing UI: create a goal and start watching
+/// the current project in one step.
+pub fn goal_new(args: &[String]) -> ExitCode {
+    let no_watch = args.iter().any(|a| a == "--no-watch");
+    let title = args
+        .iter()
+        .filter(|a| *a != "--no-watch")
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if title.is_empty() {
+        return fail("usage: witnos goal new <title…> [--no-watch]");
+    }
+    let ep = match crate::paths::read_endpoint() {
+        Ok(e) => e,
+        Err(e) => {
+            return fail(&format!(
+                "{e}\nstart the core first: cargo run -p witnos-server --example serve"
+            ))
+        }
+    };
+    let goal = match client::post_raw(&ep, "/goals", json!({"title": title})) {
+        Ok(v) => v,
+        Err(e) => return fail(&e),
+    };
+    let id = goal["id"].as_str().unwrap_or_default().to_string();
+    println!("goal created: {id}  \"{title}\"");
+    if !no_watch {
+        let cwd = std::env::current_dir()
+            .ok()
+            .and_then(|p| p.to_str().map(String::from))
+            .unwrap_or_default();
+        match client::post_raw(&ep, &format!("/goals/{id}/watch"), json!({"project_dir": cwd})) {
+            Ok(_) => println!("watching this project — the Stop gate is armed here"),
+            Err(e) => return fail(&e),
+        }
+    }
+    ExitCode::SUCCESS
+}
+
 /// Workspace fingerprint via git. `DefaultHasher` is not stable across Rust
 /// releases — fine here: fingerprints are only ever compared within the same
 /// install to detect "code moved after evidence was captured".

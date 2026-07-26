@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 /// graceful stop. Its PRESENCE is what arms the fail-closed gate.
 pub const ARMED_REL: &str = ".witnos/armed.json";
 pub const DELIVERED_REL: &str = ".witnos/delivered.json";
+pub const INSTRUCTED_REL: &str = ".witnos/instructed.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Marker {

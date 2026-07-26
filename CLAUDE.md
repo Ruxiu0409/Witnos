@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `crates/witnos-server` — the axum core as a **lib** (the future Tauri shell embeds it; `examples/serve.rs` runs it headless until then)
 - `crates/witnos-cli` — the headless bin **`witnos`**: both hooks (Stop gate fail-closed / PostToolUse delivery fail-open), arm/disarm, and the agent-facing contract subcommands
 
-Missing still: the Tauri shell + TS frontend, `witnos init` (hook installation), the UserPromptSubmit goal-binding hook, and the subjective-judgement prompt hook.
+Missing still: the Tauri shell + TS frontend, and the subjective-judgement prompt hook. (`witnos init`, the UserPromptSubmit binding/protocol hook, and `witnos goal new` landed 2026-07-26; the contract-authoring prompt is injected by the UserPromptSubmit hook once per session rather than written into any file.)
 
 This file is the English operating distillation of the README for Claude Code. The two are in sync (last verified 2026-07-26; the "Stack decision (v1)" section lives in the README as 「v1 技術選型（已定）」). When a decision is added or changed in one, back-port it to the other.
 

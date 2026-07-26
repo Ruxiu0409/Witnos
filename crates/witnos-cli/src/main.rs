@@ -6,6 +6,8 @@ mod client;
 mod cmds;
 mod hook_post;
 mod hook_stop;
+mod hook_ups;
+mod init;
 mod paths;
 
 use std::process::ExitCode;
@@ -16,6 +18,12 @@ fn main() -> ExitCode {
         Some("hook") => match args.get(2).map(String::as_str) {
             Some("stop") => hook_stop::run(),
             Some("post-tool-use") => hook_post::run(),
+            Some("user-prompt-submit") => hook_ups::run(),
+            _ => usage(),
+        },
+        Some("init") => init::run(),
+        Some("goal") => match args.get(2).map(String::as_str) {
+            Some("new") => cmds::goal_new(&args[3..]),
             _ => usage(),
         },
         Some("contract") => match args.get(2).map(String::as_str) {
@@ -47,9 +55,14 @@ fn usage() -> ExitCode {
     eprintln!(
         "witnos — the verification layer's headless CLI\n\
          \n\
+         setup:\n\
+         \x20 witnos init                 install the three hooks into ./.claude/settings.json\n\
+         \x20 witnos goal new <title…> [--no-watch]   create a goal and watch this project\n\
+         \n\
          hooks:\n\
-         \x20 witnos hook stop            Stop gate (fails CLOSED while armed)\n\
-         \x20 witnos hook post-tool-use   delivery channel (fails OPEN)\n\
+         \x20 witnos hook stop                Stop gate (fails CLOSED while armed)\n\
+         \x20 witnos hook post-tool-use       delivery channel (fails OPEN)\n\
+         \x20 witnos hook user-prompt-submit  bind session + inject the protocol once\n\
          \n\
          agent-facing (goal resolved from the armed marker):\n\
          \x20 witnos contract show [--since N]      current contract (delta from N)\n\

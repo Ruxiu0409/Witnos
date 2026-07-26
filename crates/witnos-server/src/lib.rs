@@ -37,6 +37,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/goals", get(api::list_goals).post(api::create_goal))
         .route("/goals/{id}", get(api::get_goal))
         .route("/goals/{id}/watch", post(api::watch).delete(api::unwatch))
+        .route("/goals/{id}/sessions", post(api::bind_session))
         .route("/goals/{id}/contract", get(api::contract))
         .route("/goals/{id}/items", post(api::lay_items))
         .route("/goals/{id}/items/{item_id}/edit", post(api::edit_item))
