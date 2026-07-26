@@ -4,7 +4,7 @@
 
 讓 AI coding agent 的「驗證」這一步從黑盒變透明、且能由人**即時協作編輯**的工具。
 
-**狀態：概念設計階段（pre-prototype）。本檔記錄設計脈絡與待驗證假設，尚未開始實作。**
+**狀態：概念設計階段（pre-prototype）。本檔記錄設計脈絡與待驗證假設，尚未開始實作。**（2026-07-26：動工前置的 hooks 行為 spike 已完成，見 `spike/hooks-2026-07-26/`。）
 
 ---
 
@@ -166,12 +166,14 @@
   - 「目標」與 Claude Code session 的綁定：用 UserPromptSubmit hook 建立／續接 goal（hook 拿得到 `session_id`）。
   - Stop hook 輸入的 `stop_hook_active` 旗標要處理，把「fail-closed 的刻意 stall」與「無限 block 迴圈」在語意上分開。
   - 長任務會經歷 context 壓縮：reconcile 時讓 agent 重讀 store 裡自己上次的詮釋，避免壓縮後重新發明一套理解。
-  - 已對過官方 hooks 文件（2026-07-03，code.claude.com/docs/en/hooks）：
-    - **送信可行，但 PostToolUse 沒有 `additionalContext`**（那是 Stop／SubagentStop／PreToolUse／UserPromptSubmit 的）。注入走 **exit code 2＋stderr**（文件明載 PostToolUse 的 exit 2「Shows stderr to Claude」；工具已跑完，不會擋到任何東西），或 `decision:"block"`＋`reason` 搭配 `continueOnBlock: true`（changelog 明載：把 reason 餵回給 Claude 並繼續回合）。matcher 用 `"*"`；command hook 預設逾時 10 分鐘，可用 `timeout` 欄位覆寫。
-    - hook 執行器對「非 0 非 2 退出、逾時、hook 自身崩潰」一律**繼續放行（fail open）**——所以 fail closed 必須由 `witnos-gate` 自己保證：內部逾時遠短於 hook 逾時，panic handler 裡也要輸出 block JSON。
-    - **Stop 連續 block 有上限**：連續擋太多次後，Claude Code 會帶警告結束該回合。上膛卡住因此不是無限的——目標要以「回合已結束、未達放行條件」入帳，不能假設 block 能永遠拖住 agent。
-    - http hook 的 fail open 有文件背書：「HTTP status codes alone can't block actions」——只有成功的 2xx＋正確 JSON 才能 block；連不上、逾時、非 2xx 都等於放行。
-  - hook API 仍在快速演化，實作落地時再複查一次上述欄位。
+  - 已對過官方 hooks 文件，並以 Claude Code 2.1.220 實測（2026-07-26；方法、原始記錄與可重跑的 harness 見 `spike/hooks-2026-07-26/`）：
+    - **送信兩條通道實測都通**：PostToolUse 現已支援 `hookSpecificOutput.additionalContext`（與 2026-07-03 的舊記載相反；注入位置在 tool result 旁），**exit code 2＋stderr** 也有效（「Shows stderr to Claude」；工具已跑完，不會擋到任何東西）。送信用 additionalContext，stderr 留作 fallback。matcher 用 `"*"`；command hook 預設逾時 600 秒，可用 `timeout` 欄位覆寫。（舊記載的 `continueOnBlock` 已不在文件中，不要依賴。）
+    - **Stop 的 `{"decision":"block","reason":…}` 實測有效**，且 reason 字串能實際引導 agent 的下一步。輸入中的 `stop_hook_active` 文件已不載但實際仍在（首擋 false、其後 true）；輸入另有 `last_assistant_message`、`transcript_path`；UserPromptSubmit 輸入也有 `session_id`——目標↔session 綁定可行。
+    - **Stop 連續 block 上限實測＝8**：第 9 次連續 block 的 reason 會進 transcript，但回合就此結束（headless 下 stdout 為空、無警告）。上膛卡住因此不是無限的——目標要以「回合已結束、未達放行條件」入帳，不能假設 block 能永遠拖住 agent。
+    - **fail open 實測證實**：Stop 與 PostToolUse hook 崩潰（exit 1）都被無聲放行；hook 執行器對「非 0 非 2 退出、逾時、hook 自身崩潰」一律繼續——所以 fail closed 必須由 `witnos-gate` 自己保證：內部逾時遠短於 hook 逾時，panic handler 裡也要輸出 block JSON。
+    - http hook 的 fail open 有文件背書：「HTTP hooks can't signal a blocking error through status codes alone」——只有成功的 2xx＋正確 JSON 才能 block；連不上、逾時、非 2xx 都等於放行。
+    - **信任前提**：未受信任的資料夾會忽略專案 settings 的 `permissions.allow`（2.1.220 headless 實測該情況下 hooks 仍會執行，但別依賴）——`witnos init` 的流程要把「資料夾必須先受信任」算進去。
+  - hook API 仍在快速演化（事件已達 30 種，另有 PostToolUseFailure／StopFailure 等新事件可留意）；prompt／agent 型 hook 這輪未測，v1 動工前用同一套 harness 補測、重驗上述欄位。
 
 ---
 
