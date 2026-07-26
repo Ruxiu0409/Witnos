@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/witnos-core", "crates/witnos-server", "crates/witnos-cli"]
+members = [
+    "crates/witnos-core",
+    "crates/witnos-server",
+    "crates/witnos-cli",
+    "crates/witnos-app",
+]
 
 [workspace.package]
 version = "0.1.0"

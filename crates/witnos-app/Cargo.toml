@@ -1,0 +1,17 @@
+[package]
+name = "witnos-app"
+version.workspace = true
+edition.workspace = true
+
+# The GUI core: Tauri shell embedding the axum server (witnos-server) so the
+# webview UI and the gate hit the same in-process store.
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+witnos-core = { path = "../witnos-core" }
+witnos-server = { path = "../witnos-server" }

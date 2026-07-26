@@ -6,6 +6,8 @@
 mod api;
 mod marker;
 
+pub use marker::{remove as remove_marker, sync as sync_marker};
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
