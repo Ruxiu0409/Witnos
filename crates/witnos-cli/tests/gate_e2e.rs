@@ -1,0 +1,244 @@
+//! End-to-end tests of the real `witnos` binary: the fail-closed matrix for
+//! the Stop gate and the fail-open behavior of the delivery channel, against
+//! a hand-rolled mock core.
+
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::thread;
+use std::time::Duration;
+
+static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+fn temp_dir(tag: &str) -> PathBuf {
+    let d = std::env::temp_dir().join(format!(
+        "witnos-e2e-{tag}-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::SeqCst)
+    ));
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+fn write_marker(project: &Path, goal: &str, version: u64) {
+    let dir = project.join(".witnos");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("armed.json"),
+        format!(r#"{{"goal_id":"{goal}","contract_version":{version}}}"#),
+    )
+    .unwrap();
+}
+
+fn write_endpoint(home: &Path, port: u16) {
+    std::fs::create_dir_all(home).unwrap();
+    std::fs::write(
+        home.join("endpoint.json"),
+        format!(r#"{{"port":{port},"token":"test-token"}}"#),
+    )
+    .unwrap();
+}
+
+fn run_hook(sub: &str, project: &Path, home: &Path, stdin_json: &str) -> String {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_witnos"))
+        .args(["hook", sub])
+        .current_dir(project)
+        .env("WITNOS_HOME", home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(stdin_json.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// Minimal one-shot HTTP server: reads one request, sends the canned
+/// response, closes.
+fn spawn_server(status_line: &'static str, body: &'static str) -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    thread::spawn(move || {
+        if let Ok((mut s, _)) = listener.accept() {
+            let _ = s.set_read_timeout(Some(Duration::from_secs(3)));
+            let mut data = Vec::new();
+            let mut buf = [0u8; 4096];
+            loop {
+                match s.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        data.extend_from_slice(&buf[..n]);
+                        if let Some(pos) = find(&data, b"\r\n\r\n") {
+                            let head = String::from_utf8_lossy(&data[..pos]).to_ascii_lowercase();
+                            let cl: usize = head
+                                .lines()
+                                .find_map(|l| l.strip_prefix("content-length:"))
+                                .and_then(|v| v.trim().parse().ok())
+                                .unwrap_or(0);
+                            if data.len() >= pos + 4 + cl {
+                                break;
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            let resp = format!(
+                "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = s.write_all(resp.as_bytes());
+        }
+    });
+    port
+}
+
+fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    hay.windows(needle.len()).position(|w| w == needle)
+}
+
+fn dead_port() -> u16 {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let p = l.local_addr().unwrap().port();
+    drop(l);
+    p
+}
+
+fn stdin_json(project: &Path) -> String {
+    format!(
+        r#"{{"session_id":"s1","cwd":"{}","stop_hook_active":false}}"#,
+        project.display()
+    )
+}
+
+// ---------- Stop gate: the fail-closed matrix ----------
+
+#[test]
+fn not_armed_allows_silently() {
+    let project = temp_dir("noarm");
+    let home = temp_dir("noarm-home");
+    let out = run_hook("stop", &project, &home, &stdin_json(&project));
+    assert_eq!(out.trim(), "", "unwatched project must not be touched");
+}
+
+#[test]
+fn armed_but_core_unreachable_blocks_with_escape_hatch() {
+    let project = temp_dir("unreach");
+    let home = temp_dir("unreach-home");
+    write_marker(&project, "g1", 3);
+    write_endpoint(&home, dead_port());
+    let out = run_hook("stop", &project, &home, &stdin_json(&project));
+    assert!(out.contains(r#""decision":"block""#), "got: {out}");
+    assert!(out.contains("witnos disarm"), "block reason must document the escape hatch: {out}");
+}
+
+#[test]
+fn armed_but_no_endpoint_file_blocks() {
+    let project = temp_dir("noep");
+    let home = temp_dir("noep-home"); // empty: endpoint.json missing
+    write_marker(&project, "g1", 1);
+    let out = run_hook("stop", &project, &home, &stdin_json(&project));
+    assert!(out.contains(r#""decision":"block""#), "got: {out}");
+}
+
+#[test]
+fn armed_release_allows() {
+    let project = temp_dir("release");
+    let home = temp_dir("release-home");
+    write_marker(&project, "g1", 3);
+    write_endpoint(&home, spawn_server("200 OK", r#"{"decision":"release"}"#));
+    let out = run_hook("stop", &project, &home, &stdin_json(&project));
+    assert_eq!(out.trim(), "", "release must print nothing: {out}");
+}
+
+#[test]
+fn armed_server_error_blocks() {
+    let project = temp_dir("err500");
+    let home = temp_dir("err500-home");
+    write_marker(&project, "g1", 3);
+    write_endpoint(&home, spawn_server("500 Internal Server Error", "{}"));
+    let out = run_hook("stop", &project, &home, &stdin_json(&project));
+    assert!(out.contains(r#""decision":"block""#), "got: {out}");
+}
+
+#[test]
+fn armed_malformed_response_blocks() {
+    let project = temp_dir("malformed");
+    let home = temp_dir("malformed-home");
+    write_marker(&project, "g1", 3);
+    write_endpoint(&home, spawn_server("200 OK", "this is not json"));
+    let out = run_hook("stop", &project, &home, &stdin_json(&project));
+    assert!(out.contains(r#""decision":"block""#), "got: {out}");
+}
+
+#[test]
+fn server_block_reason_is_forwarded_verbatim() {
+    let project = temp_dir("fwd");
+    let home = temp_dir("fwd-home");
+    write_marker(&project, "g1", 3);
+    write_endpoint(
+        &home,
+        spawn_server(
+            "200 OK",
+            r#"{"decision":"block","reason":"objective item not passed: cargo test"}"#,
+        ),
+    );
+    let out = run_hook("stop", &project, &home, &stdin_json(&project));
+    assert!(out.contains("objective item not passed: cargo test"), "got: {out}");
+}
+
+#[test]
+fn garbage_stdin_still_fails_closed_via_process_cwd() {
+    let project = temp_dir("garbage");
+    let home = temp_dir("garbage-home");
+    write_marker(&project, "g1", 1);
+    let out = run_hook("stop", &project, &home, "not json at all");
+    assert!(out.contains(r#""decision":"block""#), "got: {out}");
+}
+
+// ---------- Delivery channel: fail-open + local version compare ----------
+
+#[test]
+fn delivery_silent_when_contract_unchanged() {
+    let project = temp_dir("dlv-same");
+    let home = temp_dir("dlv-same-home");
+    write_marker(&project, "g1", 3);
+    std::fs::write(project.join(".witnos/delivered.json"), r#"{"s1":3}"#).unwrap();
+    let out = run_hook("post-tool-use", &project, &home, &stdin_json(&project));
+    assert_eq!(out.trim(), "", "unchanged contract must cost nothing: {out}");
+}
+
+#[test]
+fn delivery_injects_delta_and_records_version() {
+    let project = temp_dir("dlv-delta");
+    let home = temp_dir("dlv-delta-home");
+    write_marker(&project, "g1", 5);
+    std::fs::write(project.join(".witnos/delivered.json"), r#"{"s1":2}"#).unwrap();
+    write_endpoint(
+        &home,
+        spawn_server("200 OK", r#"{"version":5,"summary":"- \"calm UI\" edited: no animation at all"}"#),
+    );
+    let out = run_hook("post-tool-use", &project, &home, &stdin_json(&project));
+    assert!(out.contains("additionalContext"), "got: {out}");
+    assert!(out.contains("no animation at all"), "got: {out}");
+    let delivered = std::fs::read_to_string(project.join(".witnos/delivered.json")).unwrap();
+    assert!(delivered.contains(r#""s1": 5"#) || delivered.contains(r#""s1":5"#), "got: {delivered}");
+}
+
+#[test]
+fn delivery_fails_open_when_core_unreachable() {
+    let project = temp_dir("dlv-open");
+    let home = temp_dir("dlv-open-home"); // no endpoint.json
+    write_marker(&project, "g1", 5);
+    std::fs::write(project.join(".witnos/delivered.json"), r#"{"s1":2}"#).unwrap();
+    let out = run_hook("post-tool-use", &project, &home, &stdin_json(&project));
+    assert_eq!(out.trim(), "", "delivery must fail open silently: {out}");
+}

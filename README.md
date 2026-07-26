@@ -156,6 +156,8 @@
 
 - **`witnos init`**：裝進**專案層級**的 `.claude/settings.json`（不是使用者全域——見下面的上膛／退膛協議），共四樣：Stop 與 PostToolUse 兩個 command hook（都指向隨附的 `witnos-gate`）、主觀判斷用的 prompt hook，外加一小段**契約書寫規範**的 prompt（每條＝主張＋怎麼驗＋附什麼證據；主觀條必附詮釋；初版契約攤完後，agent 須再做一輪 **blindspot pass**——提出「使用者可能沒想到要驗」的候選項，預設主觀、待人裁決）——hook 只能逼 agent 停下，好契約要靠 prompt 端寫出來。
 
+- **契約 schema 與 Agent 寫入路徑（2026-07-26 定，詳見 `docs/schema-v1.md`）：** Goal／Item／Evidence／Event 的欄位、放行條件的形式化、origin 儀表（強版假設讀數）都定在該檔。Agent 對 store 的讀寫走**同一支 headless bin 的子命令**（用 Bash 呼叫）——能跑 shell 指令是所有 coding agent 的最大公約數，endpoint／token 封裝在 bin 內、prompt 端不碰憑證。bin 命名同時收斂：**單一 headless bin 名為 `witnos`**（上文 `witnos-gate` 的角色成為它的 `hook` 子命令家族；不依賴 `tauri` crate 的約束不變）。
+
 - **發佈：** 單一簽章 `.app`／`.exe`，跑在作業系統 webview 上（十幾二十 MB 的量級，不是 Electron 的重量）。自用 dogfood 階段直接跑**未簽章／ad-hoc 簽章**——macOS 公證與 Windows 簽章延後到要裝到別人機器時再說，不擋 v1 驗證。
 
 - **fail-closed 只在「上膛」時生效（上膛／退膛協議）：** 「連不上一律 block」若無條件成立，哪天沒開 app、在無關的專案跑 Claude Code，每個 session 都會卡死在 Stop。所以：Witnos 開始盯一個目標時，在該專案寫入**上膛標記檔（armed marker）**，內含 goal id 與契約版本，優雅停止時移除；gate 只在「有標記且連不上」時 block。App 崩潰會留下標記 → 正確卡住；沒在用 Witnos 的專案 → 永不誤傷。刻意卡住仍是已知的 UX 代價，必須讓人看得見：app 要有「正在盯 N 個目標」指示，且 **block 的 reason 字串本身就是逃生門文件**（「Witnos unreachable——開啟 app，或執行 `witnos disarm`」）——使用者卡住的當下，眼睛正好就在 transcript 上。
