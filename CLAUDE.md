@@ -1,0 +1,124 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project status
+
+**Pre-prototype / concept-design stage. There is no code yet** — the repository contains only documentation: `README.md` (the canonical design document, written in Traditional Chinese — keep it in Traditional Chinese when editing) and this file. There is no build system, no tests, no dependencies, and it is not a git repository.
+
+This file is the English operating distillation of the README for Claude Code. The two are in sync (last verified 2026-07-26; the "Stack decision (v1)" section lives in the README as 「v1 技術選型（已定）」). When a decision is added or changed in one, back-port it to the other.
+
+When implementation starts, update this file with the actual build/lint/test commands. Until then, the design constraints below are the substance of the project.
+
+## What Witnos is
+
+A local-first, open-source **thin layer** that sits on top of a user's existing coding agent (Claude Code, Codex, etc.). Its single job: make the agent's **verification step** ("did I actually do what was asked?") visible to the human and **editable by the human in real time, while the agent is still running**.
+
+The problem it exists for: whenever there is room for the user's and the agent's understanding of **"how do we know it's done"** to differ, the agent verifies against its own standard and reports "done" — and that may not be what the user meant. This line does not coincide with subjective-vs-objective: even "does it build" leaves interpretation room (which environment, which version, must tests also pass). So the agent must not be the sole judge of its own completion; the human needs a place where that yardstick is visible and steerable. (Kin of the specification gap / oracle problem / Goodhart's law — made acute by long unattended runs.)
+
+It is **not** an agent and does not replace the user's agent (BYOK — bring your own agent + credentials). It only makes the verification step of that agent transparent and human-interruptible.
+
+The name comes from **witness** — every action the agent takes is watched under the user's eyes.
+
+## The core loop (this IS the project; everything else is periphery)
+
+Three roles: **User** (a capable engineer), **Agent** (the AI that writes code, e.g. Claude Code), **Tool** (this project — the layer between them).
+
+1. User gives a goal.
+2. Agent lays out "what I'll verify, how, and the result" onto the Tool.
+3. Agent starts running.
+4. User can add/edit a verification criterion at any time **without interrupting the Agent**.
+5. On each check round, the Agent reads the **current latest version** of the verification content (this is the "living contract" — continuously re-read during execution, not a static doc read once up front).
+6. If the Agent finds its work no longer matches the latest version, it **fixes the code first per its own understanding**, then lays back onto the Tool: "I interpreted your criterion as XXX, here's what I changed, here's the current evidence."
+7. Next time the User looks, they judge whether the Agent got it right (**after-the-fact judgement** — the agent never stops to wait, so the human ruling happens later).
+
+The value is **early interception** — catching a deviation before it compounds into the foundation of downstream work, at the lowest rework cost. The loop guarantees eventual convergence to "matches latest list"; the Tool's value is letting a human intervene *early*.
+
+## Design principles (treat these as hard constraints)
+
+These are the real content of the project. Any implementation decision must be checked against them.
+
+1. **Evidence over intent.** Don't let the agent merely write what it *intends* to verify (intent can lie and can't be checked). Make it surface the **evidence it judged completion by** — screenshots it produced, the color-swatch list it detected, the contrast numbers it measured. Rationale: people are bad at proactively recalling unspoken expectations but good at being triggered by evidence in front of them. Turn the problem from "human must recall" into "evidence passively triggers."
+
+2. **For subjective items, the human is the final judge (the Goodhart safeguard).** The tool guides the agent to decompose fuzzy standards into checkable proxy metrics, **but proxy metrics are only communication scaffolding, never the judge.** Objective items: the agent may self-check and self-pass. Subjective items: proxy metrics only carry evidence to the human; **passing requires a human nod.** Never let subjective items auto-pass via proxy metrics — that is the Goodhart trap (the agent satisfies the numbers and produces something where every metric is right but the whole is wrong). This line must be held absolutely. A side door to guard: **the objective/subjective classification itself must not be the agent's call** — an item mislabeled objective silently bypasses the judge. Rule: **default subjective; an item counts as objective only if it carries a machine-executable oracle (a command + expected output)**; the human may explicitly promote an item to objective, taking responsibility for it. Classification errors must always fall toward "show the human more."
+
+3. **Living contract, not upfront spec.** Do not depend on the user fully specifying requirements at the start — subjective/tacit things are inherently unspecifiable. The verification list stays editable and re-compared throughout the loop.
+
+4. **Triage what surfaces.** More detail = more for the human to read. A 3-hour task may have hundreds of verifications; dumping all of them means the user reads none. The fix is **triage**: let the agent digest the safe items that need no human, and surface only the few that genuinely need human judgement. (The exact dimensions for "needs human judgement" are deliberately left undecided until real data exists.)
+
+5. **The unit of control is a single goal; monitoring is opt-in per goal.** A project is a series of independently-issued goals (e.g. 20 of them). Within one goal's execution the agent runs to completion without stopping for the human. "Pay attention when I want to" is not a stop-gate inside one execution — it's simply: the user decides **per goal** whether to watch it and live-edit its verification. Watch goal 1–5, ignore 6–20, come back for the last 5 — each goal is an independent issuance, so "start watching the next one" is always available.
+
+6. **After-the-fact judgement must be actively flagged, or it equals the agent deciding alone.** Since the human's ruling happens later, the tool is obligated to ensure the user doesn't miss the moment they should rule. When the agent silently reinterprets a subjective criterion and lays it back, that must be **actively surfaced** (not buried among "passed" items) — otherwise the user only nominally holds judgement. This is the same mechanism as principle 4 (triage): the agent's new interpretation of a subjective item is exactly the kind of thing that should surface.
+
+## Technical direction (planned)
+
+- **Integration model: BYOK.** User brings their own coding agent and credentials. The tool never touches the user's tokens or proxies credentials. Reference architecture: local daemon + UI, scanning PATH for available agent CLIs, connecting via per-agent adapters (cf. Open Design / nexu-io/open-design). **The UI is shipped as a cross-platform desktop app, not a browser web page** — see "Stack decision (v1)" below.
+  - **Do not** pursue "extract subscription login tokens and drive the agent yourself" — billing third-party agents against subscription quota is banned (2026/02) and OAuth tokens are fragile. The correct path is API key, or (for self-use) official Agent SDK credit.
+- **Binding mechanism: thin layer on existing agent lifecycle hooks (Path A).** Do not build an agent runtime. The best prototype base is **Claude Code**:
+  - **Stop hook** — fires when the agent thinks it's done; can return `block` to force it to continue until the release condition is met (see the central state machine in "Stack decision (v1)"). This is the core of "intercepting 'I'm done'."
+  - **http hook** — can call an external service with an Authorization header, so the verification list and judgement logic live in this tool's own backend. **Caution: the http hook FAILS OPEN** (timeout / non-2xx / connection failure → the agent continues unblocked). Since the whole product *is* the block, **do not use the http hook as the Stop gate.** The gate must be a small **command-hook shim that FAILS CLOSED** (emits `{"decision":"block"}` whenever Witnos is unreachable while armed — see the arm/disarm protocol in "Stack decision (v1)").
+  - **agent / prompt hook** — use a (sub-)model to make subjective-verification judgements.
+  - (Codex currently only supports command hooks; prompt/agent hooks are parsed but skipped. Because hooks are converging toward a cross-tool standard, **the verification-list format must be designed agent-agnostic** to ease swapping the base later.)
+- **The living contract needs two channels, not just Stop.** Stop fires when the agent thinks it's done — for a single goal that is often the very end; if mid-run edits all land at the finish line, that is end-stage interception, not early interception. So: **Stop hook = the gate** (on "I'm done", compare against the latest contract and release or block — release condition: the central state machine in "Stack decision (v1)"); **a high-frequency hook (PostToolUse) = the delivery channel** (after each tool call, a **purely local** version compare — contract unchanged: zero-cost silent pass; changed: fetch **only the changed items** from the core and inject them into the conversation). Both channels share one store and one `witnos-gate` bin (subcommands), but fail in opposite directions: **delivery fails OPEN** (can't fetch → skip silently; the gate still catches the final result), **the gate fails CLOSED**. Injected/block content is always a delta, never the full list — re-feeding hundreds of items every round makes the agent re-litigate passed items and burns tokens.
+- **Evidence scope for v1:** ship **only "agent-curated evidence" (the agent reports what it verified, its conclusion, and its basis) plus collaborative editing** — that's the core loop. The "unfilterable raw trace" (full diff, commands run, outputs) is deferred to a conditional next step, and even then must not be a raw dump (would violate principle 4) — it must be triaged to a few glanceable items. Curated evidence must carry its own insufficiency sensor: every evidence item includes a **provenance pointer** (file path, command run, URL) with one-click open-the-original in the UI, and the tool logs "human drilled down, then changed a ruling or added an item" events — that log is the requirements spec for how the raw-trace layer should filter, and raw data for principle 4's triage dimensions. Evidence is also stamped with a **workspace fingerprint** (commit / dirty hash) at capture time; if the code moved afterwards, flag the evidence stale so the human never nods at an outdated screenshot.
+
+## Stack decision (v1)
+
+**Decided** (cross-platform desktop app, not a web page). Form factor and platform are settled; the rest below is the concrete v1 shape, chosen against the project's values (thin layer, fork-easily, fail-closed gate, agent-agnostic). There is still no code — these are the constraints implementation must honor.
+
+- **Shell: Tauri 2** (native Rust core + OS webview), cross-platform (macOS + Windows + Linux). Native installable app, not a browser tab. Chosen over fully-native (Swift, macOS-only, loses TS reuse) and Electron/Node-sidecar (ships a JS runtime + hits Tauri's declined `externalBin` notarization bug).
+- **Layout: one Cargo workspace, two Rust bin targets, one TS frontend.**
+  1. **GUI core** (the Tauri app): on startup `tokio::spawn` an **axum** server bound to `127.0.0.1` on an **ephemeral port**; write `{port, token}` to `~/.witnos/endpoint.json` (mode `0600`). Serves `POST /gate` (+ the CRUD the gate needs).
+  2. **`witnos-gate`** — a **separate GUI-free bin in the same workspace that does NOT depend on the `tauri` crate** (so it links no webview runtime: ~few-hundred-KB, ms start, headless/CI-safe). Serves **both hooks via subcommands: Stop (gate) and PostToolUse (delivery)** — see Technical direction. Gate flow: reads hook JSON on stdin → reads the armed marker (see the arm/disarm protocol below) and `endpoint.json` → POSTs to the core with the bearer token → **FAILS CLOSED while armed**: on *any* error (connection refused, timeout, non-2xx, malformed, missing endpoint file) it prints `{"decision":"block", ...}` and exits; **with no armed marker it allows** (this project isn't being watched). Keeping the load-bearing path one-language/one-repo is the point.
+- **Frontend: TS SPA (React or Svelte) in the webview.** The reuse that actually applies from the cited references (nexu-io/open-design, OpenCoworkAI/open-codesign) is the **live-panel UI**, not their Node daemon. The daemon half is re-implemented in Rust — a **bounded translation** (one gate route + a JSON store + a PATH scan), not a redesign. This is the honest cost of going desktop-native.
+- **Store: one serde-JSON file per goal behind an `RwLock`** (thinnest, most forkable, local-first single-user). Move to `rusqlite` only if real concurrent webview-edit + gate-read contention shows up. The GUI core and the gate hit the **same in-process store**, so what the human edits *is* what the gate reads each round — the "living contract" with no cross-process sync.
+- **The central state machine: gate release ≠ item pass.** Subjective items pass only on a human nod, but the agent never waits for the human — so the Stop release condition is "all objective items pass ∧ all subjective items have interpretation + evidence laid out ∧ reconciled against the latest contract version", **not** "everything passed"; "agent done, subjective items awaiting ruling" is a normal terminal state of a goal. The contract carries a monotonically increasing version number (mirrored into the armed marker so the delivery channel's "unchanged" check touches no network); every piece of evidence and every reconcile is stamped "against version N" — the trust basis of after-the-fact judgement is being able to prove the agent saw your edit. After a goal closes the list stays viewable, but the UI must say plainly: no agent reads this anymore — to change the outcome, re-issue the goal (principle 5's boundary).
+- **Subjective-item judgement = Claude Code's own prompt/agent hook** (in `settings.json`), run by Claude Code with the **user's own credentials**. Witnos needs **zero in-process LLM glue** for v1 — so "no Anthropic Agent SDK in Rust" is irrelevant here. The Rust core only stores the agent's interpretation + evidence and actively flags reinterpretations (principle 6).
+- **`witnos init`** installs into the **project-level** `.claude/settings.json` (not user-global — see the arm/disarm protocol below), four things: the Stop and PostToolUse command hooks (both → bundled `witnos-gate`), the subjective-judgement prompt hook, plus a short **contract-authoring prompt** (each item = claim + how it's checked + what evidence to attach; subjective items must include the agent's interpretation; after laying out the initial contract the agent must run a **blindspot pass** — propose candidate items the user likely hasn't thought to verify, default-subjective, awaiting human ruling) — hooks can only force the agent to stop; good contracts come from the prompt side.
+- **Distribution:** single signed `.app` / `.exe` on the OS webview (low-tens-of-MB, not Electron weight). For self-dogfooding, **run unsigned / ad-hoc** — macOS notarization + Windows signing are deferred until shipping to other machines and do not block v1 validation.
+- **Fail-closed applies only while armed (arm/disarm protocol):** an unconditional "unreachable → block" would stall every Claude Code session in every project whenever the app isn't running. So: when Witnos starts watching a goal it writes an **armed marker file** into that project (goal id + contract version), removed on graceful stop; the gate blocks only when "marker present ∧ core unreachable". App crash leaves the marker → correct stall; projects not using Witnos → never harmed. The deliberate stall remains a known UX cost and must be surfaced: a visible "watching N goals" indicator, and **the block reason string is itself the escape-hatch documentation** ("Witnos unreachable — open the app, or run `witnos disarm`") — when stalled, the user's eyes are already on the transcript.
+- **When to reconsider:** the first genuinely TS-shaped need (roadmap step 4 — adding Codex and wanting to lift an open-design adapter *verbatim*; or step 5's raw-trace shaping) justifies extracting a **TS sidecar supervised by the Rust core**. Do not pre-pay this for v1.
+- **Implementation notes:** bind a "goal" to a Claude Code session via a UserPromptSubmit hook (it receives `session_id`); handle the `stop_hook_active` flag on Stop input, keeping "deliberate fail-closed stall" and "infinite block loop" semantically distinct; long tasks go through context compaction — on reconcile, have the agent re-read its own previous interpretations from the store rather than re-derive them.
+- **Verified against the official hooks docs (2026-07-03, code.claude.com/docs/en/hooks):**
+  - **Delivery is feasible, but PostToolUse has NO `additionalContext`** (that belongs to Stop/SubagentStop/PreToolUse/UserPromptSubmit). Inject via **exit code 2 + stderr** (documented for PostToolUse: "Shows stderr to Claude"; the tool already ran, so nothing gets blocked), or `decision:"block"` + `reason` with `continueOnBlock: true` (changelog: feeds the reason back to Claude and continues the turn). Matcher `"*"`; command hooks default to a 10-minute timeout with a per-hook `timeout` override.
+  - The hook runner treats non-0/non-2 exits, timeouts, and hook crashes as **continue (fail open)** — so fail-closed must be guaranteed inside `witnos-gate` itself: internal timeouts far below the hook timeout, and the panic handler must still print the block JSON.
+  - **Consecutive Stop blocks are capped**: after too many consecutive blocks, Claude Code ends the turn with a warning. The armed stall is therefore not infinite — account the goal as "turn ended, release condition unmet"; never assume a block can hold the agent forever.
+  - The http-hook fail-open claim is doc-backed: "HTTP status codes alone can't block actions" — only a successful 2xx with proper JSON can block; unreachable/timeout/non-2xx all mean the agent continues.
+  - The hook API still moves fast — re-verify these fields when implementation starts.
+
+## The core bet (most important)
+
+> **Showing a human "evidence" lets them catch their own unspoken expectations better than showing them a "text checklist."**
+
+If this is false, the tool is just a prettier checklist. When building/using the minimal prototype, watch specifically for the **strong version**: does the user actually catch things *not previously written in the list* **because they saw evidence** — not merely feel "the info is thorough." (Weak version "more evidence helps" is near-certain; the product bets on the strong version.)
+
+Validation method chosen: build a minimal version and dogfood it — **instrumented, not vibes**: every contract add/edit records its provenance — (a) written before the run, (b) added while viewing a specific evidence item (record which), (c) spontaneous mid-run. The count of (b) is the direct readout of the strong version, and the same metric works for the fallback experiment; near-zero cost since edit events land in the store anyway. Cheap fallback if no resonance: Wizard-of-Oz — run a real task with an off-the-shelf agent, manually assemble its evidence, split a few engineers into two groups (one sees text-only list, one sees evidence), compare whether the latter catches more un-pre-written gaps.
+
+## Scope and non-goals (current)
+
+- **Local-first, single-user, open-source.** No cloud, no cross-user data collection.
+- **No moat sought.** Being clean enough to understand and fork easily is a feature.
+- **Does not replace the agent harness.** Only the "verification transparency + collaboration" layer.
+- The tool is **domain-neutral**: it understands *process*, not *content*. It does not embed any domain's evidence extractor — "what evidence to surface" is produced by the Agent. Aesthetics, taste, and technical judgement (correctness, edge cases, codebase conventions, security) are all the same action to the tool: force the agent to surface evidence, let the domain authority poke at it.
+- **Target user and value ceiling.** The user is someone whose judgement is already adequate but who is locked outside the agent's black box (typically a software engineer). The tool **does not make the user smarter** — it gives existing judgement a place to act. Its value ceiling is the user's own cognition: surfacing evidence to someone who lacks the relevant concept (e.g. "Apple uses only black/white/grey") does nothing. Don't design features premised on teaching the user the domain.
+- **Explicitly out of scope (recorded only):** learning "what people usually miss for this kind of task" from de-identified cross-user data — conflicts directly with local-first / no-data-exfiltration positioning.
+
+## Roadmap (abridged)
+
+1. Build the minimal viable prototype (this *is* the validation method): on Claude Code hooks — the Stop (gate) + PostToolUse (delivery) pair + a verification core reading the "living contract" + a minimal UI to edit it during execution. v1 = agent-curated evidence (a) with collaborative editing, after-the-fact judgement. Dogfood it instrumented (see "The core bet"), watching the strong-version bet.
+2. Present "evidence the agent surfaces" well (agent produces it; tool only displays and flags).
+3. Add triage + per-goal opt-in/out monitoring; implement principle 6's active flagging of the agent's new interpretation of subjective items.
+4. Abstract the verification-list format into an agent-agnostic schema; try a second base agent.
+5. (Conditional) Only if agent-curated evidence proves insufficient *and you can see where* — design the filtering rules for the raw-trace layer.
+
+## Related references (from the README)
+
+- **Loop engineering** — the "reason → act → observe → repeat" framing the project's problem statement builds on; the verification/observe step is what Witnos targets.
+- **Claude Code hooks** (Stop / http / agent) — the planned binding mechanism (see Technical direction).
+- **`open-design` (nexu-io/open-design)** — reference for the BYOK integration model (local daemon + web UI + per-agent adapters scanning PATH).
+- **`open-codesign` (OpenCoworkAI)** — its "live agent panel: todos + tool calls + interruptible generation" is the closest existing implementation of the "executing under the user's eyes" experience; worth dissecting before building the UI.
+- **"A Field Guide to Fable: Finding Your Unknowns"** (Thariq Shihipar, Anthropic, 2026-07, x.com/trq212/article/2073100352921215386) — independently states the same problem model from the prompt side: quality bottlenecks on clarifying your own unknowns, and **unknown knowns** (things you know but never articulated, visible only in front of results) are exactly what the core bet harvests — evidence is their developing agent. His five manual techniques (blindspot pass, brainstorming, interviews, references, implementation plan) are pre/post-run discipline; Witnos mechanizes that discipline into a layer on the execution loop. His post-implementation "quiz/report" (make sure the human actually understood before merging) is a far-future idea for principle 6's "judgement must not become rubber-stamping".
+
+## License
+
+Open source; the specific license is deliberately not chosen yet (the README suggests Apache-2.0 or MIT, depending on patent-clause needs). Do not add a `LICENSE` file or license headers until it is decided.
