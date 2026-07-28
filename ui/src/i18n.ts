@@ -89,6 +89,11 @@ const en = {
   settings: "settings",
   closeSettings: "close settings",
   language: "Language",
+  archive: "archive",
+  showArchive: "show archived goals",
+  hideArchive: "back to active goals",
+  archivedHeading: (n: number) => `archived goals (${n})`,
+  archivedNone: "no archived goals — closing a goal moves it here",
   deleteGoalMenu: "delete goal…",
   confirmDeleteGoal: (title: string) =>
     `Delete goal "${title}"? This permanently removes its contract, evidence, and events.`,
@@ -161,6 +166,11 @@ const zhHant: Messages = {
   settings: "設定",
   closeSettings: "關閉設定",
   language: "語言",
+  archive: "封存",
+  showArchive: "顯示已封存的目標",
+  hideArchive: "返回進行中的目標",
+  archivedHeading: (n) => `已封存的目標（${n}）`,
+  archivedNone: "沒有已封存的目標——關閉目標後會移到這裡",
   deleteGoalMenu: "刪除目標…",
   confirmDeleteGoal: (title) =>
     `確定刪除目標「${title}」？這會永久移除它的契約、證據與事件紀錄。`,

@@ -17,6 +17,7 @@ export default function App() {
     () => localStorage.getItem("witnos.sidebar_collapsed") === "1",
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [showArchive, setShowArchive] = useState(false);
   const [lang, setLang] = useState<Lang>(detectLang);
   const t = messages[lang];
   const [termOpen, setTermOpen] = useState(
@@ -179,6 +180,10 @@ export default function App() {
     });
 
   const watchingCount = goals.filter((g) => g.watching).length;
+  const archivedGoals = goals.filter((g) => g.status === "closed");
+  const listedGoals = showArchive
+    ? archivedGoals
+    : goals.filter((g) => g.status !== "closed");
   const needsYou = goal
     ? goal.items.filter(
         (i) => i.class.kind === "subjective" && i.status === "laid",
@@ -222,7 +227,15 @@ export default function App() {
           </div>
         )}
         <div className="goal-list">
-          {goals.map((g) => (
+          {showArchive && (
+            <div className="archive-head">
+              {t.archivedHeading(archivedGoals.length)}
+            </div>
+          )}
+          {showArchive && archivedGoals.length === 0 && (
+            <div className="list-empty">{t.archivedNone}</div>
+          )}
+          {listedGoals.map((g) => (
             <button
               key={g.id}
               className={`goal-row ${sel === g.id ? "sel" : ""}`}
@@ -242,17 +255,32 @@ export default function App() {
             </button>
           ))}
         </div>
-        <div className="new-goal">
-          <input
-            placeholder={t.newGoalPlaceholder}
-            value={newTitle}
-            onChange={(e) => setNewTitle(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && createGoal()}
-          />
-          <button onClick={createGoal}>{t.create}</button>
-        </div>
+        {!showArchive && (
+          <div className="new-goal">
+            <input
+              placeholder={t.newGoalPlaceholder}
+              value={newTitle}
+              onChange={(e) => setNewTitle(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && createGoal()}
+            />
+            <button onClick={createGoal}>{t.create}</button>
+          </div>
+        )}
         {err && <div className="err">{err}</div>}
         <div className="sidebar-footer">
+          <button
+            className={`settings-btn ${showArchive ? "active" : ""}`}
+            onClick={() => setShowArchive((a) => !a)}
+            title={showArchive ? t.hideArchive : t.showArchive}
+            aria-label={showArchive ? t.hideArchive : t.showArchive}
+            aria-pressed={showArchive}
+          >
+            <span className="settings-icon">🗃</span>
+            <span className="settings-label">
+              {t.archive}
+              {archivedGoals.length > 0 ? ` (${archivedGoals.length})` : ""}
+            </span>
+          </button>
           <button
             className="settings-btn"
             onClick={toggleTerm}

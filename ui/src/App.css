@@ -231,6 +231,23 @@
   background: var(--panel2);
 }
 
+.settings-btn.active {
+  color: var(--accent);
+}
+
+.archive-head {
+  padding: 8px 16px;
+  color: var(--dim);
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.list-empty {
+  padding: 12px 16px;
+  color: var(--dim);
+  font-size: 12px;
+}
+
 .sidebar.collapsed .sidebar-footer {
   padding: 8px 4px;
 }
