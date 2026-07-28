@@ -22,6 +22,7 @@ export default function App() {
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem("witnos.sidebar_collapsed") === "1",
   );
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Which evidence the user is looking at right now — the honest source of
   // the origin instrumentation (the strong-bet (b) signal).
@@ -170,7 +171,41 @@ export default function App() {
           <button onClick={createGoal}>create</button>
         </div>
         {err && <div className="err">{err}</div>}
+        <div className="sidebar-footer">
+          <button
+            className="settings-btn"
+            onClick={() => setSettingsOpen(true)}
+            title="settings"
+            aria-label="settings"
+          >
+            <span className="settings-icon">⚙</span>
+            <span className="settings-label">settings</span>
+          </button>
+        </div>
       </aside>
+
+      {settingsOpen && (
+        <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}>
+          <div
+            className="modal"
+            role="dialog"
+            aria-label="settings"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="modal-head">
+              <h2>settings</h2>
+              <button
+                className="ghost"
+                onClick={() => setSettingsOpen(false)}
+                aria-label="close settings"
+              >
+                ✕
+              </button>
+            </header>
+            <div className="modal-body empty">nothing here yet</div>
+          </div>
+        </div>
+      )}
 
       <main className="detail">
         {!goal ? (
