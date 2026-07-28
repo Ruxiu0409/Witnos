@@ -19,6 +19,9 @@ export default function App() {
   const [sel, setSel] = useState<string | null>(null);
   const [goal, setGoal] = useState<api.Goal | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState(
+    () => localStorage.getItem("witnos.sidebar_collapsed") === "1",
+  );
 
   // Which evidence the user is looking at right now — the honest source of
   // the origin instrumentation (the strong-bet (b) signal).
@@ -92,6 +95,12 @@ export default function App() {
     await api.drillDown(goal.id, ev.id, ptr);
   };
 
+  const toggleSidebar = () =>
+    setCollapsed((c) => {
+      localStorage.setItem("witnos.sidebar_collapsed", c ? "0" : "1");
+      return !c;
+    });
+
   const watchingCount = goals.filter((g) => g.watching).length;
   const needsYou = goal
     ? goal.items.filter(
@@ -107,15 +116,34 @@ export default function App() {
 
   return (
     <div className="app">
-      <aside className="sidebar">
+      <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
         <header>
-          <h1>witnos</h1>
-          <div className="watching">
-            {watchingCount > 0
-              ? `watching ${watchingCount} goal${watchingCount > 1 ? "s" : ""}`
-              : "watching nothing"}
+          <div className="sidebar-title">
+            <h1>witnos</h1>
+            <div className="watching">
+              {watchingCount > 0
+                ? `watching ${watchingCount} goal${watchingCount > 1 ? "s" : ""}`
+                : "watching nothing"}
+            </div>
           </div>
+          <button
+            className="sidebar-toggle"
+            onClick={toggleSidebar}
+            title={collapsed ? "expand sidebar" : "collapse sidebar"}
+            aria-label={collapsed ? "expand sidebar" : "collapse sidebar"}
+            aria-expanded={!collapsed}
+          >
+            {collapsed ? "»" : "«"}
+          </button>
         </header>
+        {collapsed && watchingCount > 0 && (
+          <div
+            className="rail-watching"
+            title={`watching ${watchingCount} goal${watchingCount > 1 ? "s" : ""}`}
+          >
+            👁 {watchingCount}
+          </div>
+        )}
         <div className="goal-list">
           {goals.map((g) => (
             <button
