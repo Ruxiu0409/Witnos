@@ -483,6 +483,25 @@ impl Store {
         })
     }
 
+    /// Permanently remove a goal — disk first, then memory, so a failed file
+    /// removal leaves the store consistent. Returns the removed goal so the
+    /// caller can clean up anything keyed on it (e.g. an armed marker).
+    pub fn delete_goal(&self, goal_id: &str) -> Result<Goal, StoreError> {
+        let mut map = self.write();
+        let goal = map
+            .get(goal_id)
+            .cloned()
+            .ok_or_else(|| StoreError::GoalNotFound(goal_id.to_string()))?;
+        let path = self.dir.join(format!("{}.json", goal.id));
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+        map.remove(goal_id);
+        Ok(goal)
+    }
+
     fn read(&self) -> std::sync::RwLockReadGuard<'_, HashMap<GoalId, Goal>> {
         self.goals.read().unwrap_or_else(PoisonError::into_inner)
     }

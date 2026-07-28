@@ -1,14 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "./api";
+import TerminalPanel from "./TerminalPanel";
+import { LANGS, detectLang, messages, saveLang, type Lang } from "./i18n";
 import "./App.css";
-
-const STATUS_LABEL: Record<string, string> = {
-  open: "open",
-  laid: "awaiting your ruling",
-  passed: "passed (oracle)",
-  approved: "approved by you",
-  rejected: "rejected by you",
-};
 
 function short(id: string): string {
   return id.slice(0, 8);
@@ -23,6 +17,26 @@ export default function App() {
     () => localStorage.getItem("witnos.sidebar_collapsed") === "1",
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [lang, setLang] = useState<Lang>(detectLang);
+  const t = messages[lang];
+  const [termOpen, setTermOpen] = useState(
+    () => localStorage.getItem("witnos.term_open") === "1",
+  );
+  // Mount the shell lazily on first open, then keep it alive while hidden.
+  const [termEver, setTermEver] = useState(false);
+  const [termCwd, setTermCwd] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{
+    x: number;
+    y: number;
+    goal: api.GoalSummary;
+  } | null>(null);
+  // In-app confirm: window.confirm() is a silent no-op in wry's WKWebView
+  // (no WKUIDelegate confirm panel), so never use it here.
+  const [confirmBox, setConfirmBox] = useState<{
+    message: string;
+    label: string;
+    action: () => void;
+  } | null>(null);
 
   // Which evidence the user is looking at right now — the honest source of
   // the origin instrumentation (the strong-bet (b) signal).
@@ -49,9 +63,30 @@ export default function App() {
 
   useEffect(() => {
     refresh();
-    const t = setInterval(refresh, 1500);
-    return () => clearInterval(t);
+    const iv = setInterval(refresh, 1500);
+    return () => clearInterval(iv);
   }, [refresh]);
+
+  useEffect(() => {
+    if (!menu && !confirmBox) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setMenu(null);
+        setConfirmBox(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [menu, confirmBox]);
+
+  useEffect(() => {
+    document.documentElement.lang = lang;
+  }, [lang]);
+
+  const changeLang = (l: Lang) => {
+    saveLang(l);
+    setLang(l);
+  };
 
   const selectGoal = (id: string) => {
     setSel(id);
@@ -67,6 +102,20 @@ export default function App() {
     selectGoal(g.id);
     refresh();
   };
+
+  const removeGoal = (g: api.GoalSummary) =>
+    setConfirmBox({
+      message: t.confirmDeleteGoal(g.title),
+      label: t.delete,
+      action: async () => {
+        await api.deleteGoal(g.id);
+        if (sel === g.id) {
+          setSel(null);
+          setGoal(null);
+        }
+        refresh();
+      },
+    });
 
   const addItem = async () => {
     if (!goal || !newClaim.trim() || !newCheck.trim()) return;
@@ -96,6 +145,33 @@ export default function App() {
     await api.drillDown(goal.id, ev.id, ptr);
   };
 
+  const toggleTerm = useCallback(() => {
+    setTermOpen((o) => {
+      localStorage.setItem("witnos.term_open", o ? "0" : "1");
+      return !o;
+    });
+  }, []);
+
+  // Shell cwd = the selected goal's project dir at the moment the terminal
+  // first opens (falls back to $HOME in the backend).
+  useEffect(() => {
+    if (termOpen && !termEver) {
+      setTermCwd(goal?.project_dir ?? null);
+      setTermEver(true);
+    }
+  }, [termOpen, termEver, goal]);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.ctrlKey && !e.metaKey && !e.altKey && e.key === "`") {
+        e.preventDefault();
+        toggleTerm();
+      }
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [toggleTerm]);
+
   const toggleSidebar = () =>
     setCollapsed((c) => {
       localStorage.setItem("witnos.sidebar_collapsed", c ? "0" : "1");
@@ -110,10 +186,10 @@ export default function App() {
     : [];
 
   const originNote = viewing
-    ? `while viewing evidence ${short(viewing)} — records the strong-bet (b) signal`
+    ? t.originViewing(short(viewing))
     : goal && goal.sessions.length > 0
-      ? "mid-run, unprompted"
-      : "pre-run";
+      ? t.originMidRun
+      : t.originPreRun;
 
   return (
     <div className="app">
@@ -123,15 +199,15 @@ export default function App() {
             <h1>witnos</h1>
             <div className="watching">
               {watchingCount > 0
-                ? `watching ${watchingCount} goal${watchingCount > 1 ? "s" : ""}`
-                : "watching nothing"}
+                ? t.watchingCount(watchingCount)
+                : t.watchingNone}
             </div>
           </div>
           <button
             className="sidebar-toggle"
             onClick={toggleSidebar}
-            title={collapsed ? "expand sidebar" : "collapse sidebar"}
-            aria-label={collapsed ? "expand sidebar" : "collapse sidebar"}
+            title={collapsed ? t.expandSidebar : t.collapseSidebar}
+            aria-label={collapsed ? t.expandSidebar : t.collapseSidebar}
             aria-expanded={!collapsed}
           >
             {collapsed ? "»" : "«"}
@@ -140,7 +216,7 @@ export default function App() {
         {collapsed && watchingCount > 0 && (
           <div
             className="rail-watching"
-            title={`watching ${watchingCount} goal${watchingCount > 1 ? "s" : ""}`}
+            title={t.watchingCount(watchingCount)}
           >
             👁 {watchingCount}
           </div>
@@ -151,10 +227,15 @@ export default function App() {
               key={g.id}
               className={`goal-row ${sel === g.id ? "sel" : ""}`}
               onClick={() => selectGoal(g.id)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setMenu({ x: e.clientX, y: e.clientY, goal: g });
+              }}
             >
               <span className="goal-title">{g.title}</span>
               <span className="goal-meta">
-                v{g.contract_version} · {g.status.replaceAll("_", " ")}
+                v{g.contract_version} · {t.goalStatus(g.status)}
                 {g.watching ? " · 👁" : ""}
                 {g.strong_bet_count > 0 ? ` · (b)×${g.strong_bet_count}` : ""}
               </span>
@@ -163,93 +244,175 @@ export default function App() {
         </div>
         <div className="new-goal">
           <input
-            placeholder="new goal title…"
+            placeholder={t.newGoalPlaceholder}
             value={newTitle}
             onChange={(e) => setNewTitle(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && createGoal()}
           />
-          <button onClick={createGoal}>create</button>
+          <button onClick={createGoal}>{t.create}</button>
         </div>
         {err && <div className="err">{err}</div>}
         <div className="sidebar-footer">
           <button
             className="settings-btn"
+            onClick={toggleTerm}
+            title={t.toggleTerminalTitle}
+            aria-label={t.toggleTerminal}
+          >
+            <span className="settings-icon">{">_"}</span>
+            <span className="settings-label">{t.terminal}</span>
+          </button>
+          <button
+            className="settings-btn"
             onClick={() => setSettingsOpen(true)}
-            title="settings"
-            aria-label="settings"
+            title={t.settings}
+            aria-label={t.settings}
           >
             <span className="settings-icon">⚙</span>
-            <span className="settings-label">settings</span>
+            <span className="settings-label">{t.settings}</span>
           </button>
         </div>
       </aside>
+
+      {menu && (
+        <div
+          className="ctx-backdrop"
+          onClick={() => setMenu(null)}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setMenu(null);
+          }}
+        >
+          <div
+            className="ctx-menu"
+            role="menu"
+            style={{
+              left: Math.min(menu.x, window.innerWidth - 170),
+              top: Math.min(menu.y, window.innerHeight - 48),
+            }}
+          >
+            <button
+              className="ctx-item danger-item"
+              role="menuitem"
+              onClick={() => {
+                const g = menu.goal;
+                setMenu(null);
+                removeGoal(g);
+              }}
+            >
+              {t.deleteGoalMenu}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {confirmBox && (
+        <div className="modal-backdrop" onClick={() => setConfirmBox(null)}>
+          <div
+            className="modal confirm"
+            role="alertdialog"
+            aria-label={t.confirm}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="confirm-msg">{confirmBox.message}</div>
+            <div className="confirm-actions">
+              <button className="ghost" onClick={() => setConfirmBox(null)}>
+                {t.cancel}
+              </button>
+              <button
+                className="danger"
+                onClick={() => {
+                  const act = confirmBox.action;
+                  setConfirmBox(null);
+                  act();
+                }}
+              >
+                {confirmBox.label}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {settingsOpen && (
         <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}>
           <div
             className="modal"
             role="dialog"
-            aria-label="settings"
+            aria-label={t.settings}
             onClick={(e) => e.stopPropagation()}
           >
             <header className="modal-head">
-              <h2>settings</h2>
+              <h2>{t.settings}</h2>
               <button
                 className="ghost"
                 onClick={() => setSettingsOpen(false)}
-                aria-label="close settings"
+                aria-label={t.closeSettings}
               >
                 ✕
               </button>
             </header>
-            <div className="modal-body empty">nothing here yet</div>
+            <div className="modal-body">
+              <label className="setting-row">
+                <span>{t.language}</span>
+                <select
+                  value={lang}
+                  onChange={(e) => changeLang(e.target.value as Lang)}
+                >
+                  {LANGS.map((l) => (
+                    <option key={l.value} value={l.value}>
+                      {l.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
           </div>
         </div>
       )}
 
       <main className="detail">
         {!goal ? (
-          <div className="empty">select a goal</div>
+          <div className="empty">{t.selectAGoal}</div>
         ) : (
           <>
             <header className="goal-head">
               <h2>{goal.title}</h2>
               <div className="goal-sub">
-                contract v{goal.contract_version} · agent synced v
-                {goal.agent_synced_version} · {goal.status.replaceAll("_", " ")}
+                {t.contractV(goal.contract_version)} ·{" "}
+                {t.agentSyncedV(goal.agent_synced_version)} ·{" "}
+                {t.goalStatus(goal.status)}
                 {goal.project_dir ? ` · ${goal.project_dir}` : ""}
               </div>
               <div className="goal-actions">
                 {goal.watching && (
                   <button onClick={() => api.unwatchGoal(goal.id).then(refresh)}>
-                    stop watching
+                    {t.stopWatching}
                   </button>
                 )}
                 {goal.status !== "closed" && (
                   <button
                     className="danger"
                     onClick={() =>
-                      confirm("Close this goal? No agent will read it anymore.") &&
-                      api.closeGoal(goal.id).then(refresh)
+                      setConfirmBox({
+                        message: t.confirmCloseGoal,
+                        label: t.closeGoal,
+                        action: () => api.closeGoal(goal.id).then(refresh),
+                      })
                     }
                   >
-                    close goal
+                    {t.closeGoal}
                   </button>
                 )}
               </div>
             </header>
 
             {goal.status === "closed" && (
-              <div className="banner closed">
-                This goal is closed — no agent reads this contract anymore. To
-                change the outcome, re-issue the goal.
-              </div>
+              <div className="banner closed">{t.closedBanner}</div>
             )}
             {needsYou.length > 0 && (
               <div className="banner needs">
-                {needsYou.length} subjective item{needsYou.length > 1 ? "s" : ""}{" "}
-                await your ruling — the agent lays evidence and moves on; it is not
-                waiting for you.
+                {t.needsBanner(needsYou.length)}
               </div>
             )}
 
@@ -268,21 +431,24 @@ export default function App() {
                   >
                     <div className="item-head">
                       <span className={`chip ${item.class.kind}`}>
-                        {item.class.kind}
+                        {t.itemClass(item.class.kind)}
                       </span>
                       <span className={`chip status-${item.status}`}>
-                        {STATUS_LABEL[item.status] ?? item.status}
+                        {t.itemStatus(item.status)}
                       </span>
                       {reinterpreted && (
                         <span
                           className="chip reinterpreted"
-                          title="The agent re-read this criterion — check its current interpretation."
+                          title={t.reinterpretedTitle}
                         >
-                          reinterpreted ×{item.interpretation_history.length - 1}
+                          {t.reinterpreted(item.interpretation_history.length - 1)}
                         </span>
                       )}
-                      <span className="chip origin" title={`origin: ${item.origin.kind}`}>
-                        {item.origin.kind.replaceAll("_", " ")}
+                      <span
+                        className="chip origin"
+                        title={t.originTitle(t.originKind(item.origin.kind))}
+                      >
+                        {t.originKind(item.origin.kind)}
                       </span>
                       <span className="spacer" />
                       {goal.status !== "closed" && editing !== item.id && (
@@ -294,7 +460,7 @@ export default function App() {
                             setEditCheck(item.check);
                           }}
                         >
-                          edit
+                          {t.edit}
                         </button>
                       )}
                     </div>
@@ -311,23 +477,23 @@ export default function App() {
                         />
                         <div>
                           <button onClick={() => saveEdit(item.id)}>
-                            save (reopens item)
+                            {t.saveReopens}
                           </button>
                           <button className="ghost" onClick={() => setEditing(null)}>
-                            cancel
+                            {t.cancel}
                           </button>
                         </div>
                       </div>
                     ) : (
                       <>
                         <div className="claim">{item.claim}</div>
-                        <div className="check">check: {item.check}</div>
+                        <div className="check">{t.checkLine(item.check)}</div>
                       </>
                     )}
 
                     {item.interpretation && (
                       <div className="interp">
-                        <span className="interp-label">agent reads this as:</span>{" "}
+                        <span className="interp-label">{t.agentReadsThisAs}</span>{" "}
                         {item.interpretation}
                       </div>
                     )}
@@ -342,13 +508,10 @@ export default function App() {
                         >
                           <div className="ev-head">
                             <span className="ev-conclusion">{ev.conclusion}</span>
-                            <span className="chip">against v{ev.against_version}</span>
+                            <span className="chip">{t.againstV(ev.against_version)}</span>
                             {stale && (
-                              <span
-                                className="chip stale"
-                                title="The criterion was edited after this evidence was captured."
-                              >
-                                stale
+                              <span className="chip stale" title={t.staleTitle}>
+                                {t.stale}
                               </span>
                             )}
                           </div>
@@ -358,7 +521,7 @@ export default function App() {
                               <button
                                 key={idx}
                                 className="prov"
-                                title="open the original (recorded as a drill-down)"
+                                title={t.provTitle}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   drill(item, ev, p);
@@ -384,13 +547,13 @@ export default function App() {
                             className={`approve ${item.status === "approved" ? "active" : ""}`}
                             onClick={() => rule(item, true)}
                           >
-                            ✓ approve
+                            ✓ {t.approve}
                           </button>
                           <button
                             className={`reject ${item.status === "rejected" ? "active" : ""}`}
                             onClick={() => rule(item, false)}
                           >
-                            ✗ reject
+                            ✗ {t.reject}
                           </button>
                         </div>
                       )}
@@ -401,25 +564,25 @@ export default function App() {
 
             {goal.status !== "closed" && (
               <section className="add-item">
-                <h3>add a verification item</h3>
+                <h3>{t.addItemHeading}</h3>
                 <input
-                  placeholder="claim — what must hold"
+                  placeholder={t.claimPlaceholder}
                   value={newClaim}
                   onChange={(e) => setNewClaim(e.target.value)}
                 />
                 <input
-                  placeholder="check — how to verify it"
+                  placeholder={t.checkPlaceholder}
                   value={newCheck}
                   onChange={(e) => setNewCheck(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && addItem()}
                 />
                 <div className="add-row">
-                  <button onClick={addItem}>add (subjective by default)</button>
+                  <button onClick={addItem}>{t.addSubjective}</button>
                   <span className="origin-note">
-                    will be recorded as: {originNote}
+                    {t.recordedAs(originNote)}
                     {viewing && (
                       <button className="ghost" onClick={() => setViewing(null)}>
-                        clear
+                        {t.clear}
                       </button>
                     )}
                   </span>
@@ -429,6 +592,15 @@ export default function App() {
           </>
         )}
       </main>
+
+      {termEver && (
+        <TerminalPanel
+          open={termOpen}
+          cwd={termCwd}
+          onClose={toggleTerm}
+          t={t}
+        />
+      )}
     </div>
   );
 }

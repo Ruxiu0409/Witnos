@@ -318,3 +318,26 @@ fn persistence_roundtrip() {
     assert_eq!(g.items.len(), 1);
     assert!(matches!(g.items[0].origin, Origin::AgentInitial));
 }
+
+#[test]
+fn delete_goal_removes_memory_and_disk() {
+    let (store, dir) = temp_store();
+    let goal = store.create_goal("doomed").unwrap();
+    let file = dir.join(format!("{}.json", goal.id));
+    assert!(file.exists());
+
+    let removed = store.delete_goal(&goal.id).unwrap();
+    assert_eq!(removed.id, goal.id);
+    assert!(!file.exists());
+    assert!(store.get_goal(&goal.id).is_none());
+    // a reopened store must not resurrect it
+    drop(store);
+    let store = Store::open(&dir).unwrap();
+    assert!(store.get_goal(&goal.id).is_none());
+
+    // deleting twice reports GoalNotFound
+    assert!(matches!(
+        store.delete_goal(&goal.id),
+        Err(StoreError::GoalNotFound(_))
+    ));
+}

@@ -95,4 +95,5 @@ export const drillDown = (goalId: string, evidenceId: string, pointer: Pointer) 
   invoke("drill_down", { goalId, evidenceId, pointer });
 
 export const closeGoal = (goalId: string) => invoke("close_goal", { goalId });
+export const deleteGoal = (goalId: string) => invoke("delete_goal", { goalId });
 export const unwatchGoal = (goalId: string) => invoke("unwatch_goal", { goalId });

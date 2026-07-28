@@ -6,6 +6,8 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod terminal;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -172,6 +174,21 @@ fn close_goal(state: State<'_, App>, goal_id: String) -> Result<Value, String> {
     Ok(json!({"ok": true}))
 }
 
+/// Deletion is a human act: exposed only over IPC, never on the HTTP
+/// surface the agent talks to.
+#[tauri::command]
+fn delete_goal(state: State<'_, App>, goal_id: String) -> Result<Value, String> {
+    if let Some(goal) = state.0.store.get_goal(&goal_id) {
+        witnos_server::remove_marker(&goal);
+    }
+    state
+        .0
+        .store
+        .delete_goal(&goal_id)
+        .map_err(|e| e.to_string())?;
+    Ok(json!({"ok": true}))
+}
+
 #[tauri::command]
 fn unwatch_goal(state: State<'_, App>, goal_id: String) -> Result<Value, String> {
     let goal = state
@@ -223,6 +240,7 @@ fn main() {
                 tauri::async_runtime::block_on(witnos_server::start(&witnos_home()))
                     .map_err(|e| e as Box<dyn std::error::Error>)?;
             app.manage(App(handle.state.clone()));
+            app.manage(terminal::Terminals::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -234,7 +252,12 @@ fn main() {
             rule_item,
             drill_down,
             close_goal,
-            unwatch_goal
+            delete_goal,
+            unwatch_goal,
+            terminal::term_spawn,
+            terminal::term_write,
+            terminal::term_resize,
+            terminal::term_kill
         ])
         .build(tauri::generate_context!())
         .expect("witnos app failed to build")

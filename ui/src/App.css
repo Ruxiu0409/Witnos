@@ -1,6 +1,16 @@
 .app {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: minmax(0, 1fr) auto;
   height: 100%;
+}
+
+.sidebar {
+  grid-area: 1 / 1;
+}
+
+.detail {
+  grid-area: 1 / 2;
 }
 
 /* ---------- sidebar ---------- */
@@ -117,9 +127,55 @@
   padding: 10px 16px;
 }
 
+.goal-row:hover {
+  background: var(--panel2);
+}
+
 .goal-row.sel {
   background: var(--panel2);
   border-left: 3px solid var(--accent);
+}
+
+/* ---------- context menu ---------- */
+
+.ctx-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+
+.ctx-menu {
+  position: fixed;
+  z-index: 21;
+  min-width: 150px;
+  padding: 4px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.ctx-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  padding: 6px 10px;
+  color: var(--text);
+}
+
+.ctx-item:hover {
+  background: var(--panel);
+}
+
+.ctx-item.danger-item {
+  color: var(--bad);
+}
+
+.ctx-item.danger-item:hover {
+  background: #2a1a1f;
 }
 
 .goal-title {
@@ -223,6 +279,31 @@
 
 .modal-body {
   flex: 1;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.modal.confirm {
+  width: min(380px, 90vw);
+  min-height: 0;
+  padding: 16px;
+  gap: 14px;
+}
+
+.confirm-msg {
+  font-size: 13.5px;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 /* ---------- detail ---------- */
@@ -483,4 +564,53 @@
 .origin-note {
   color: var(--dim);
   font-size: 12px;
+}
+
+/* ---------- terminal ---------- */
+
+.term-panel {
+  grid-area: 2 / 1 / 3 / 3;
+  height: min(300px, 40vh);
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.term-panel.hidden {
+  display: none;
+}
+
+.term-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  font-size: 12px;
+}
+
+.term-title {
+  color: var(--dim);
+  letter-spacing: 0.05em;
+}
+
+.term-cwd {
+  color: var(--dim);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.term-box {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 0 0 8px;
+}
+
+.term-box .xterm {
+  height: 100%;
 }

@@ -58,3 +58,17 @@ input:focus {
   outline: none;
   border-color: var(--accent);
 }
+
+select {
+  font: inherit;
+  background: var(--panel2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+}
+
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
