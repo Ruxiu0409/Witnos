@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "./api";
 import TerminalPanel from "./TerminalPanel";
-import { LANGS, detectLang, messages, saveLang, type Lang } from "./i18n";
+import LangPicker from "./LangPicker";
+import { detectLang, messages, saveLang, type Lang } from "./i18n";
 import "./App.css";
 
 function short(id: string): string {
@@ -402,19 +403,10 @@ export default function App() {
               </button>
             </header>
             <div className="settings-body">
-              <label className="setting-row">
+              <div className="setting-row">
                 <span>{t.language}</span>
-                <select
-                  value={lang}
-                  onChange={(e) => changeLang(e.target.value as Lang)}
-                >
-                  {LANGS.map((l) => (
-                    <option key={l.value} value={l.value}>
-                      {l.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                <LangPicker lang={lang} onChange={changeLang} t={t} />
+              </div>
             </div>
           </section>
         )}

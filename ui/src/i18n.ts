@@ -6,9 +6,24 @@
 
 export type Lang = "en" | "zh-Hant";
 
-export const LANGS: { value: Lang; label: string }[] = [
-  { value: "en", label: "English" },
-  { value: "zh-Hant", label: "繁體中文" },
+// Native name plus what each UI language calls it — the picker renders
+// "native • name-in-current-UI-language" (skipping the second half when
+// identical), like macOS language menus.
+export const LANGS: {
+  value: Lang;
+  native: string;
+  names: Record<Lang, string>;
+}[] = [
+  {
+    value: "en",
+    native: "English",
+    names: { en: "English", "zh-Hant": "英文" },
+  },
+  {
+    value: "zh-Hant",
+    native: "繁體中文",
+    names: { en: "Traditional Chinese", "zh-Hant": "繁體中文" },
+  },
 ];
 
 const LS_KEY = "witnos.lang";
@@ -86,6 +101,8 @@ const en = {
   settings: "settings",
   closeSettings: "close settings",
   language: "Language",
+  searchLanguage: "search languages…",
+  noMatches: "no matches",
   archive: "archive",
   showArchive: "show archived goals",
   hideArchive: "back to active goals",
@@ -160,6 +177,8 @@ const zhHant: Messages = {
   settings: "設定",
   closeSettings: "關閉設定",
   language: "語言",
+  searchLanguage: "搜尋語言…",
+  noMatches: "沒有符合的語言",
   archive: "封存",
   showArchive: "顯示已封存的目標",
   hideArchive: "返回進行中的目標",

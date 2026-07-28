@@ -707,3 +707,86 @@
   padding: 12px 0;
   border-bottom: 1px solid var(--border);
 }
+
+/* ---------- language picker ---------- */
+
+.lang-picker {
+  position: relative;
+}
+
+.lang-picker-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 150px;
+  padding: 5px 10px;
+}
+
+.lang-picker-chevron {
+  color: var(--dim);
+  line-height: 1;
+  transform: translateY(-2px);
+}
+
+.lang-picker-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  width: 280px;
+  max-height: 320px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  animation: lang-pop-in 120ms ease;
+}
+
+@keyframes lang-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.lang-picker-search {
+  margin: 8px 8px 4px;
+  background: var(--panel);
+}
+
+.lang-picker-list {
+  list-style: none;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.lang-picker-item {
+  display: flex;
+  align-items: center;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+/* Keyboard and mouse share one highlight (mouseenter moves it). */
+.lang-picker-item.active {
+  background: var(--panel);
+}
+
+.lang-picker-item .lang-localized {
+  color: var(--dim);
+}
+
+.lang-picker-item .lang-check {
+  margin-left: auto;
+  color: var(--accent);
+}
+
+.lang-picker-empty {
+  padding: 8px 10px;
+  color: var(--dim);
+}
