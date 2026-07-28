@@ -28,6 +28,7 @@ Rust toolchain via rustup; make sure `~/.cargo/bin` is on PATH.
 - `cargo build --release -p witnos-cli` — produces the `witnos` bin at `target/release/witnos`
 - `cargo run -p witnos-server --example serve` — run the core headless (binds an ephemeral 127.0.0.1 port, writes `$WITNOS_HOME/endpoint.json`, default `~/.witnos`; Ctrl-C = graceful stop, removes armed markers)
 - GUI app: `cd ui && npm install && npm run build` (frontendDist must exist before the Rust build), then `cargo run -p witnos-app`
+- `scripts/install-app.sh` — one-shot release install: builds the frontend, bundles `Witnos.app` via the tauri CLI, replaces `/Applications/Witnos.app` (quitting a running instance), and reopens it (`--no-open` to skip)
 
 ## What Witnos is
 

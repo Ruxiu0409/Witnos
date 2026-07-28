@@ -115,40 +115,43 @@ function TerminalView({
 }
 
 export default function TerminalPanel({
-  open,
   cwd,
-  onClose,
   t,
 }: {
-  open: boolean;
   cwd: string | null;
-  onClose: () => void;
   t: Messages;
 }) {
   const [gen, setGen] = useState(0);
   const [exited, setExited] = useState(false);
+  // The cwd prop tracks the selected goal; the shell only reads it at spawn
+  // time (mount / restart), so the header shows the spawn-time value, never a
+  // directory the running shell isn't actually in.
+  const [spawnCwd, setSpawnCwd] = useState(cwd);
 
   const restart = useCallback(() => {
+    setSpawnCwd(cwd);
     setExited(false);
     setGen((g) => g + 1);
-  }, []);
+  }, [cwd]);
 
   return (
-    <div className={`term-panel ${open ? "" : "hidden"}`}>
+    <div className="term-panel">
       <header className="term-head">
         <span className="term-title">{t.terminal}</span>
-        {cwd && <span className="term-cwd">{cwd}</span>}
+        {spawnCwd && <span className="term-cwd">{spawnCwd}</span>}
         <span className="spacer" />
         {exited && (
           <button className="ghost" onClick={restart}>
             ↻ {t.restartShell}
           </button>
         )}
-        <button className="ghost" onClick={onClose} title={t.hideTerminal}>
-          ✕
-        </button>
       </header>
-      <TerminalView key={gen} cwd={cwd} onExit={() => setExited(true)} t={t} />
+      <TerminalView
+        key={gen}
+        cwd={spawnCwd}
+        onExit={() => setExited(true)}
+        t={t}
+      />
     </div>
   );
 }

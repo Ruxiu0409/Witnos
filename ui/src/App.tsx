@@ -20,12 +20,6 @@ export default function App() {
   const [showArchive, setShowArchive] = useState(false);
   const [lang, setLang] = useState<Lang>(detectLang);
   const t = messages[lang];
-  const [termOpen, setTermOpen] = useState(
-    () => localStorage.getItem("witnos.term_open") === "1",
-  );
-  // Mount the shell lazily on first open, then keep it alive while hidden.
-  const [termEver, setTermEver] = useState(false);
-  const [termCwd, setTermCwd] = useState<string | null>(null);
   const [menu, setMenu] = useState<{
     x: number;
     y: number;
@@ -146,38 +140,29 @@ export default function App() {
     await api.drillDown(goal.id, ev.id, ptr);
   };
 
-  const toggleTerm = useCallback(() => {
-    setTermOpen((o) => {
-      localStorage.setItem("witnos.term_open", o ? "0" : "1");
-      return !o;
-    });
-  }, []);
-
-  // Shell cwd = the selected goal's project dir at the moment the terminal
-  // first opens (falls back to $HOME in the backend).
-  useEffect(() => {
-    if (termOpen && !termEver) {
-      setTermCwd(goal?.project_dir ?? null);
-      setTermEver(true);
-    }
-  }, [termOpen, termEver, goal]);
-
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => {
-      if (e.ctrlKey && !e.metaKey && !e.altKey && e.key === "`") {
-        e.preventDefault();
-        toggleTerm();
-      }
-    };
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, [toggleTerm]);
-
-  const toggleSidebar = () =>
+  const toggleSidebar = useCallback(() => {
     setCollapsed((c) => {
       localStorage.setItem("witnos.sidebar_collapsed", c ? "0" : "1");
       return !c;
     });
+  }, []);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (
+        e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.shiftKey &&
+        e.key.toLowerCase() === "s"
+      ) {
+        e.preventDefault();
+        toggleSidebar();
+      }
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [toggleSidebar]);
 
   const watchingCount = goals.filter((g) => g.watching).length;
   const archivedGoals = goals.filter((g) => g.status === "closed");
@@ -211,11 +196,44 @@ export default function App() {
           <button
             className="sidebar-toggle"
             onClick={toggleSidebar}
-            title={collapsed ? t.expandSidebar : t.collapseSidebar}
             aria-label={collapsed ? t.expandSidebar : t.collapseSidebar}
             aria-expanded={!collapsed}
+            aria-keyshortcuts="Meta+S"
           >
-            {collapsed ? "»" : "«"}
+            {/* sidebar.left in the SF Symbols style; pane filled = sidebar shown */}
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              aria-hidden="true"
+            >
+              <rect
+                x="1.6"
+                y="2.6"
+                width="12.8"
+                height="10.8"
+                rx="2.2"
+                stroke="currentColor"
+                strokeWidth="1.2"
+              />
+              <path d="M6.2 2.6v10.8" stroke="currentColor" strokeWidth="1.2" />
+              {!collapsed && (
+                <rect
+                  x="2.9"
+                  y="3.9"
+                  width="2.2"
+                  height="8.2"
+                  rx="0.9"
+                  fill="currentColor"
+                  opacity="0.55"
+                />
+              )}
+            </svg>
+            <span className="toggle-tip" aria-hidden="true">
+              {collapsed ? t.expandSidebar : t.collapseSidebar}
+              <kbd>⌘S</kbd>
+            </span>
           </button>
         </header>
         {collapsed && watchingCount > 0 && (
@@ -280,15 +298,6 @@ export default function App() {
               {t.archive}
               {archivedGoals.length > 0 ? ` (${archivedGoals.length})` : ""}
             </span>
-          </button>
-          <button
-            className="settings-btn"
-            onClick={toggleTerm}
-            title={t.toggleTerminalTitle}
-            aria-label={t.toggleTerminal}
-          >
-            <span className="settings-icon">{">_"}</span>
-            <span className="settings-label">{t.terminal}</span>
           </button>
           <button
             className="settings-btn"
@@ -399,7 +408,11 @@ export default function App() {
         </div>
       )}
 
-      <main className="detail">
+      <main className="term-main">
+        <TerminalPanel cwd={goal?.project_dir ?? null} t={t} />
+      </main>
+
+      <aside className="detail">
         {!goal ? (
           <div className="empty">{t.selectAGoal}</div>
         ) : (
@@ -619,16 +632,7 @@ export default function App() {
             )}
           </>
         )}
-      </main>
-
-      {termEver && (
-        <TerminalPanel
-          open={termOpen}
-          cwd={termCwd}
-          onClose={toggleTerm}
-          t={t}
-        />
-      )}
+      </aside>
     </div>
   );
 }
