@@ -16,7 +16,12 @@ export default function App() {
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem("witnos.sidebar_collapsed") === "1",
   );
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  // What the workspace (the middle pane) is showing: the terminal, or the
+  // settings view. The terminal stays mounted underneath so its shell
+  // session survives the switch.
+  const [workspaceView, setWorkspaceView] = useState<"terminal" | "settings">(
+    "terminal",
+  );
   const [showArchive, setShowArchive] = useState(false);
   const [lang, setLang] = useState<Lang>(detectLang);
   const t = messages[lang];
@@ -63,16 +68,17 @@ export default function App() {
   }, [refresh]);
 
   useEffect(() => {
-    if (!menu && !confirmBox) return;
+    if (!menu && !confirmBox && workspaceView !== "settings") return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setMenu(null);
         setConfirmBox(null);
+        setWorkspaceView("terminal");
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [menu, confirmBox]);
+  }, [menu, confirmBox, workspaceView]);
 
   useEffect(() => {
     document.documentElement.lang = lang;
@@ -300,10 +306,15 @@ export default function App() {
             </span>
           </button>
           <button
-            className="settings-btn"
-            onClick={() => setSettingsOpen(true)}
+            className={`settings-btn ${workspaceView === "settings" ? "active" : ""}`}
+            onClick={() =>
+              setWorkspaceView((v) =>
+                v === "settings" ? "terminal" : "settings",
+              )
+            }
             title={t.settings}
             aria-label={t.settings}
+            aria-pressed={workspaceView === "settings"}
           >
             <span className="settings-icon">⚙</span>
             <span className="settings-label">{t.settings}</span>
@@ -371,25 +382,26 @@ export default function App() {
         </div>
       )}
 
-      {settingsOpen && (
-        <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}>
-          <div
-            className="modal"
-            role="dialog"
-            aria-label={t.settings}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <header className="modal-head">
-              <h2>{t.settings}</h2>
+      <main className="workspace">
+        <TerminalPanel
+          cwd={goal?.project_dir ?? null}
+          t={t}
+          hidden={workspaceView !== "terminal"}
+        />
+        {workspaceView === "settings" && (
+          <section className="settings-pane" aria-label={t.settings}>
+            <header className="settings-head">
+              <span className="settings-title">{t.settings}</span>
+              <span className="spacer" />
               <button
                 className="ghost"
-                onClick={() => setSettingsOpen(false)}
+                onClick={() => setWorkspaceView("terminal")}
                 aria-label={t.closeSettings}
               >
                 ✕
               </button>
             </header>
-            <div className="modal-body">
+            <div className="settings-body">
               <label className="setting-row">
                 <span>{t.language}</span>
                 <select
@@ -404,235 +416,233 @@ export default function App() {
                 </select>
               </label>
             </div>
-          </div>
-        </div>
-      )}
-
-      <main className="term-main">
-        <TerminalPanel cwd={goal?.project_dir ?? null} t={t} />
+          </section>
+        )}
       </main>
 
-      <aside className="detail">
-        {!goal ? (
-          <div className="empty">{t.selectAGoal}</div>
-        ) : (
-          <>
-            <header className="goal-head">
-              <h2>{goal.title}</h2>
-              <div className="goal-sub">
-                {t.contractV(goal.contract_version)} ·{" "}
-                {t.agentSyncedV(goal.agent_synced_version)} ·{" "}
-                {t.goalStatus(goal.status)}
-                {goal.project_dir ? ` · ${goal.project_dir}` : ""}
-              </div>
-              <div className="goal-actions">
-                {goal.watching && (
-                  <button onClick={() => api.unwatchGoal(goal.id).then(refresh)}>
-                    {t.stopWatching}
-                  </button>
-                )}
-                {goal.status !== "closed" && (
-                  <button
-                    className="danger"
-                    onClick={() =>
-                      setConfirmBox({
-                        message: t.confirmCloseGoal,
-                        label: t.closeGoal,
-                        action: () => api.closeGoal(goal.id).then(refresh),
-                      })
-                    }
-                  >
-                    {t.closeGoal}
-                  </button>
-                )}
-              </div>
-            </header>
+      {workspaceView !== "settings" && (
+        <aside className="detail">
+          {!goal ? (
+            <div className="empty">{t.selectAGoal}</div>
+          ) : (
+            <>
+              <header className="goal-head">
+                <h2>{goal.title}</h2>
+                <div className="goal-sub">
+                  {t.contractV(goal.contract_version)} ·{" "}
+                  {t.agentSyncedV(goal.agent_synced_version)} ·{" "}
+                  {t.goalStatus(goal.status)}
+                  {goal.project_dir ? ` · ${goal.project_dir}` : ""}
+                </div>
+                <div className="goal-actions">
+                  {goal.watching && (
+                    <button onClick={() => api.unwatchGoal(goal.id).then(refresh)}>
+                      {t.stopWatching}
+                    </button>
+                  )}
+                  {goal.status !== "closed" && (
+                    <button
+                      className="danger"
+                      onClick={() =>
+                        setConfirmBox({
+                          message: t.confirmCloseGoal,
+                          label: t.closeGoal,
+                          action: () => api.closeGoal(goal.id).then(refresh),
+                        })
+                      }
+                    >
+                      {t.closeGoal}
+                    </button>
+                  )}
+                </div>
+              </header>
 
-            {goal.status === "closed" && (
-              <div className="banner closed">{t.closedBanner}</div>
-            )}
-            {needsYou.length > 0 && (
-              <div className="banner needs">
-                {t.needsBanner(needsYou.length)}
-              </div>
-            )}
+              {goal.status === "closed" && (
+                <div className="banner closed">{t.closedBanner}</div>
+              )}
+              {needsYou.length > 0 && (
+                <div className="banner needs">
+                  {t.needsBanner(needsYou.length)}
+                </div>
+              )}
 
-            <section className="items">
-              {goal.items.map((item) => {
-                const evs = goal.evidence.filter((e) => e.item_id === item.id);
-                const reinterpreted = item.interpretation_history.length > 1;
-                return (
-                  <article
-                    key={item.id}
-                    className={`item ${
-                      item.status === "laid" && item.class.kind === "subjective"
-                        ? "attention"
-                        : ""
-                    }`}
-                  >
-                    <div className="item-head">
-                      <span className={`chip ${item.class.kind}`}>
-                        {t.itemClass(item.class.kind)}
-                      </span>
-                      <span className={`chip status-${item.status}`}>
-                        {t.itemStatus(item.status)}
-                      </span>
-                      {reinterpreted && (
-                        <span
-                          className="chip reinterpreted"
-                          title={t.reinterpretedTitle}
-                        >
-                          {t.reinterpreted(item.interpretation_history.length - 1)}
+              <section className="items">
+                {goal.items.map((item) => {
+                  const evs = goal.evidence.filter((e) => e.item_id === item.id);
+                  const reinterpreted = item.interpretation_history.length > 1;
+                  return (
+                    <article
+                      key={item.id}
+                      className={`item ${
+                        item.status === "laid" && item.class.kind === "subjective"
+                          ? "attention"
+                          : ""
+                      }`}
+                    >
+                      <div className="item-head">
+                        <span className={`chip ${item.class.kind}`}>
+                          {t.itemClass(item.class.kind)}
                         </span>
-                      )}
-                      <span
-                        className="chip origin"
-                        title={t.originTitle(t.originKind(item.origin.kind))}
-                      >
-                        {t.originKind(item.origin.kind)}
-                      </span>
-                      <span className="spacer" />
-                      {goal.status !== "closed" && editing !== item.id && (
-                        <button
-                          className="ghost"
-                          onClick={() => {
-                            setEditing(item.id);
-                            setEditClaim(item.claim);
-                            setEditCheck(item.check);
-                          }}
+                        <span className={`chip status-${item.status}`}>
+                          {t.itemStatus(item.status)}
+                        </span>
+                        {reinterpreted && (
+                          <span
+                            className="chip reinterpreted"
+                            title={t.reinterpretedTitle}
+                          >
+                            {t.reinterpreted(item.interpretation_history.length - 1)}
+                          </span>
+                        )}
+                        <span
+                          className="chip origin"
+                          title={t.originTitle(t.originKind(item.origin.kind))}
                         >
-                          {t.edit}
+                          {t.originKind(item.origin.kind)}
+                        </span>
+                        <span className="spacer" />
+                        {goal.status !== "closed" && editing !== item.id && (
+                          <button
+                            className="ghost"
+                            onClick={() => {
+                              setEditing(item.id);
+                              setEditClaim(item.claim);
+                              setEditCheck(item.check);
+                            }}
+                          >
+                            {t.edit}
+                          </button>
+                        )}
+                      </div>
+
+                      {editing === item.id ? (
+                        <div className="edit-form">
+                          <input
+                            value={editClaim}
+                            onChange={(e) => setEditClaim(e.target.value)}
+                          />
+                          <input
+                            value={editCheck}
+                            onChange={(e) => setEditCheck(e.target.value)}
+                          />
+                          <div>
+                            <button onClick={() => saveEdit(item.id)}>
+                              {t.saveReopens}
+                            </button>
+                            <button className="ghost" onClick={() => setEditing(null)}>
+                              {t.cancel}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="claim">{item.claim}</div>
+                          <div className="check">{t.checkLine(item.check)}</div>
+                        </>
+                      )}
+
+                      {item.interpretation && (
+                        <div className="interp">
+                          <span className="interp-label">{t.agentReadsThisAs}</span>{" "}
+                          {item.interpretation}
+                        </div>
+                      )}
+
+                      {evs.map((ev) => {
+                        const stale = ev.against_version < item.last_edited_version;
+                        return (
+                          <div
+                            key={ev.id}
+                            className={`evidence ${viewing === ev.id ? "viewing" : ""}`}
+                            onClick={() => setViewing(ev.id)}
+                          >
+                            <div className="ev-head">
+                              <span className="ev-conclusion">{ev.conclusion}</span>
+                              <span className="chip">{t.againstV(ev.against_version)}</span>
+                              {stale && (
+                                <span className="chip stale" title={t.staleTitle}>
+                                  {t.stale}
+                                </span>
+                              )}
+                            </div>
+                            <div className="ev-basis">{ev.basis}</div>
+                            <div className="ev-prov">
+                              {ev.provenance.map((p, idx) => (
+                                <button
+                                  key={idx}
+                                  className="prov"
+                                  title={t.provTitle}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    drill(item, ev, p);
+                                  }}
+                                >
+                                  {p.kind === "file"
+                                    ? `📄 ${p.path}${p.lines ? `:${p.lines}` : ""}`
+                                    : p.kind === "url"
+                                      ? `🔗 ${p.url}`
+                                      : `$ ${p.cmd}`}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {item.class.kind === "subjective" &&
+                        ["laid", "approved", "rejected"].includes(item.status) &&
+                        goal.status !== "closed" && (
+                          <div className="ruling">
+                            <button
+                              className={`approve ${item.status === "approved" ? "active" : ""}`}
+                              onClick={() => rule(item, true)}
+                            >
+                              ✓ {t.approve}
+                            </button>
+                            <button
+                              className={`reject ${item.status === "rejected" ? "active" : ""}`}
+                              onClick={() => rule(item, false)}
+                            >
+                              ✗ {t.reject}
+                            </button>
+                          </div>
+                        )}
+                    </article>
+                  );
+                })}
+              </section>
+
+              {goal.status !== "closed" && (
+                <section className="add-item">
+                  <h3>{t.addItemHeading}</h3>
+                  <input
+                    placeholder={t.claimPlaceholder}
+                    value={newClaim}
+                    onChange={(e) => setNewClaim(e.target.value)}
+                  />
+                  <input
+                    placeholder={t.checkPlaceholder}
+                    value={newCheck}
+                    onChange={(e) => setNewCheck(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && addItem()}
+                  />
+                  <div className="add-row">
+                    <button onClick={addItem}>{t.addSubjective}</button>
+                    <span className="origin-note">
+                      {t.recordedAs(originNote)}
+                      {viewing && (
+                        <button className="ghost" onClick={() => setViewing(null)}>
+                          {t.clear}
                         </button>
                       )}
-                    </div>
-
-                    {editing === item.id ? (
-                      <div className="edit-form">
-                        <input
-                          value={editClaim}
-                          onChange={(e) => setEditClaim(e.target.value)}
-                        />
-                        <input
-                          value={editCheck}
-                          onChange={(e) => setEditCheck(e.target.value)}
-                        />
-                        <div>
-                          <button onClick={() => saveEdit(item.id)}>
-                            {t.saveReopens}
-                          </button>
-                          <button className="ghost" onClick={() => setEditing(null)}>
-                            {t.cancel}
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="claim">{item.claim}</div>
-                        <div className="check">{t.checkLine(item.check)}</div>
-                      </>
-                    )}
-
-                    {item.interpretation && (
-                      <div className="interp">
-                        <span className="interp-label">{t.agentReadsThisAs}</span>{" "}
-                        {item.interpretation}
-                      </div>
-                    )}
-
-                    {evs.map((ev) => {
-                      const stale = ev.against_version < item.last_edited_version;
-                      return (
-                        <div
-                          key={ev.id}
-                          className={`evidence ${viewing === ev.id ? "viewing" : ""}`}
-                          onClick={() => setViewing(ev.id)}
-                        >
-                          <div className="ev-head">
-                            <span className="ev-conclusion">{ev.conclusion}</span>
-                            <span className="chip">{t.againstV(ev.against_version)}</span>
-                            {stale && (
-                              <span className="chip stale" title={t.staleTitle}>
-                                {t.stale}
-                              </span>
-                            )}
-                          </div>
-                          <div className="ev-basis">{ev.basis}</div>
-                          <div className="ev-prov">
-                            {ev.provenance.map((p, idx) => (
-                              <button
-                                key={idx}
-                                className="prov"
-                                title={t.provTitle}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  drill(item, ev, p);
-                                }}
-                              >
-                                {p.kind === "file"
-                                  ? `📄 ${p.path}${p.lines ? `:${p.lines}` : ""}`
-                                  : p.kind === "url"
-                                    ? `🔗 ${p.url}`
-                                    : `$ ${p.cmd}`}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                    {item.class.kind === "subjective" &&
-                      ["laid", "approved", "rejected"].includes(item.status) &&
-                      goal.status !== "closed" && (
-                        <div className="ruling">
-                          <button
-                            className={`approve ${item.status === "approved" ? "active" : ""}`}
-                            onClick={() => rule(item, true)}
-                          >
-                            ✓ {t.approve}
-                          </button>
-                          <button
-                            className={`reject ${item.status === "rejected" ? "active" : ""}`}
-                            onClick={() => rule(item, false)}
-                          >
-                            ✗ {t.reject}
-                          </button>
-                        </div>
-                      )}
-                  </article>
-                );
-              })}
-            </section>
-
-            {goal.status !== "closed" && (
-              <section className="add-item">
-                <h3>{t.addItemHeading}</h3>
-                <input
-                  placeholder={t.claimPlaceholder}
-                  value={newClaim}
-                  onChange={(e) => setNewClaim(e.target.value)}
-                />
-                <input
-                  placeholder={t.checkPlaceholder}
-                  value={newCheck}
-                  onChange={(e) => setNewCheck(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && addItem()}
-                />
-                <div className="add-row">
-                  <button onClick={addItem}>{t.addSubjective}</button>
-                  <span className="origin-note">
-                    {t.recordedAs(originNote)}
-                    {viewing && (
-                      <button className="ghost" onClick={() => setViewing(null)}>
-                        {t.clear}
-                      </button>
-                    )}
-                  </span>
-                </div>
-              </section>
-            )}
-          </>
-        )}
-      </aside>
+                    </span>
+                  </div>
+                </section>
+              )}
+            </>
+          )}
+        </aside>
+      )}
     </div>
   );
 }

@@ -117,9 +117,12 @@ function TerminalView({
 export default function TerminalPanel({
   cwd,
   t,
+  hidden = false,
 }: {
   cwd: string | null;
   t: Messages;
+  // Hide instead of unmount: the shell must survive workspace view switches.
+  hidden?: boolean;
 }) {
   const [gen, setGen] = useState(0);
   const [exited, setExited] = useState(false);
@@ -135,7 +138,7 @@ export default function TerminalPanel({
   }, [cwd]);
 
   return (
-    <div className="term-panel">
+    <div className={`term-panel ${hidden ? "hidden" : ""}`}>
       <header className="term-head">
         <span className="term-title">{t.terminal}</span>
         {spawnCwd && <span className="term-cwd">{spawnCwd}</span>}
