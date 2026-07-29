@@ -137,7 +137,6 @@ export const drillDown = (
 
 export const closeGoal = (goalId: string) => invoke("close_goal", { goalId });
 export const deleteGoal = (goalId: string) => invoke("delete_goal", { goalId });
-export const unwatchGoal = (goalId: string) => invoke("unwatch_goal", { goalId });
 
 // Auto-watched projects (human-only surface — IPC, never HTTP).
 export const pickProjectDir = () => invoke<string | null>("pick_project_dir");

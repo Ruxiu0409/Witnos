@@ -1073,13 +1073,6 @@ export default function App() {
                       {goal.project_dir ? ` · ${goal.project_dir}` : ""}
                     </div>
                     <div className="goal-actions">
-                      {goal.watching && (
-                        <button
-                          onClick={() => api.unwatchGoal(goal.id).then(refresh)}
-                        >
-                          {t.stopWatching}
-                        </button>
-                      )}
                       {goal.status !== "closed" && (
                         <button
                           className="danger"

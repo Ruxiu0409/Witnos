@@ -309,17 +309,6 @@ fn delete_goal(state: State<'_, App>, goal_id: String) -> Result<Value, String> 
     Ok(json!({"ok": true}))
 }
 
-#[tauri::command]
-fn unwatch_goal(state: State<'_, App>, goal_id: String) -> Result<Value, String> {
-    let goal = state
-        .0
-        .store
-        .set_watch(&goal_id, None, false)
-        .map_err(|e| e.to_string())?;
-    witnos_server::resync_goal_dir(&state.0, &goal);
-    Ok(json!({"ok": true}))
-}
-
 // ---------- auto-watch projects (human-only surface: IPC, never HTTP) ----------
 
 #[tauri::command]
@@ -558,7 +547,6 @@ fn main() {
             drill_down,
             close_goal,
             delete_goal,
-            unwatch_goal,
             pick_project_dir,
             add_auto_project,
             remove_auto_project,

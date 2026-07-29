@@ -151,7 +151,6 @@ const en = {
   // goal detail
   selectAGoal: "select a goal",
   goalStatus: (s: string) => GOAL_STATUS_EN[s] ?? s.replaceAll("_", " "),
-  stopWatching: "stop watching",
   closeGoal: "close goal",
   confirmCloseGoal: "Close this goal? No agent will read it anymore.",
   closedBanner:
@@ -282,7 +281,6 @@ const zhHant: Messages = {
   // goal detail
   selectAGoal: "選擇一個目標",
   goalStatus: (s) => GOAL_STATUS_ZH[s] ?? s.replaceAll("_", " "),
-  stopWatching: "停止監看",
   closeGoal: "關閉目標",
   confirmCloseGoal: "確定關閉這個目標？之後不會再有代理讀取它。",
   closedBanner:
