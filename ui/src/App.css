@@ -235,9 +235,13 @@
   overflow-wrap: anywhere;
 }
 
-/* Fixed inner width so the collapse animation clips instead of reflowing. */
+/* Fixed inner width so the collapse animation clips instead of reflowing.
+   Minus the pane's own right border: --sidebar-w is the sidebar's border-box,
+   so the bare variable overflows the content box by exactly that 1px, which
+   used to be invisible and now shows up as a row pill sitting 8px off the left
+   edge and 7px off the right. */
 .sidebar .goal-list {
-  width: var(--sidebar-w);
+  width: calc(var(--sidebar-w) - 1px);
   transition:
     opacity 0.12s ease,
     visibility 0.12s;
@@ -248,18 +252,29 @@
   visibility: hidden;
 }
 
-/* No rules between rows, and the whole strip is the hit area: the highlight
-   runs edge to edge rather than sitting in an inset pill. Width must be
-   explicit — a button's `auto` is shrink-to-fit even at display: block, which
-   would leave the row only as wide as its title. */
+/* No rules between rows: the highlight is the only thing that draws a row, and
+   it draws as an inset pill — pulled 8px off both edges so it never touches the
+   pane's border, radius matching the context menu's. The padding gives back
+   exactly what the margin took, so the text column stays at the sidebar's 16px
+   regardless of the shape. Width must be explicit — a button's `auto` is
+   shrink-to-fit even at display: block, which would leave the row only as wide
+   as its title.
+
+   The 2px at the bottom is what keeps the pill a pill: a selected project row
+   sitting directly above its selected goal made two fills touch, and touching
+   fills read as one block with a line of text in it rather than as two rows.
+   Bottom-only, so sibling margin collapsing gives exactly 2px between any two
+   rows (and collapses through .proj-group, which has no padding of its own, to
+   space adjacent groups the same way). */
 .goal-row {
   display: block;
-  width: 100%;
+  width: calc(100% - 16px);
+  margin: 0 8px 2px;
   text-align: left;
   background: none;
   border: none;
-  border-radius: 0;
-  padding: 10px 16px;
+  border-radius: 8px;
+  padding: 10px 8px;
 }
 
 .goal-row:hover {
@@ -391,9 +406,11 @@
   margin-bottom: 4px;
 }
 
-/* Goals sit indented under their project row — belonging at a glance. */
+/* Goals sit indented under their project row — belonging at a glance. The
+   number is the indent minus the pill's own 8px margin, so the text lands
+   where it did before the pill. */
 .goal-row.nested {
-  padding-left: 38px;
+  padding-left: 30px;
 }
 
 /* A goal carrying evidence the human hasn't looked at (principle 6: don't let
@@ -430,13 +447,14 @@
 /* The add-project affordance: lives at the right edge of the "projects"
    heading, hidden until the pointer is over the projects section (or the
    button holds keyboard focus) — ChatGPT-sidebar style. Only the right
-   padding tightens, so the heading keeps the height of the other ones. */
+   padding tightens, so the heading keeps the height of the other ones — to the
+   same 8px gutter the pills below it stand in. */
 .archive-head.proj-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding-right: 10px;
+  padding-right: 8px;
 }
 
 .proj-add {
@@ -463,8 +481,13 @@
   border-color: transparent;
 }
 
+/* 8px, the same gutter the row pills sit in — the footer button's hover fill
+   and a goal row's have to be the same pill or the sidebar reads as two
+   columns. The button's inner padding is 7, not 8, because unlike a row it
+   keeps the base button's 1px border (transparent) — 8 + 1 + 7 lands its icon
+   on the 16px content column with everything else. */
 .sidebar-footer {
-  padding: 8px 10px;
+  padding: 8px;
 }
 
 .settings-btn {
@@ -474,8 +497,9 @@
   width: 100%;
   background: none;
   border-color: transparent;
+  border-radius: 8px;
   color: var(--dim);
-  padding: 4px 6px;
+  padding: 4px 7px;
   white-space: nowrap;
 }
 
