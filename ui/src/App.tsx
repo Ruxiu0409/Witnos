@@ -1120,18 +1120,14 @@ export default function App() {
                   {needsYou.length > 0 && (
                     <div className="banner needs">{needsNote}</div>
                   )}
-                  {/* The gap it reports is the one the agent has to close —
-                      the whole contract, not just the human's last edit — which
-                      is why these two numbers aren't the pair `unsynced` tested;
-                      they match what the typed nudge tells the agent to run. */}
+                  {/* The versions the agent is behind by stay out of this line:
+                      they name the gap precisely, but no other surface in the app
+                      shows a v-number, so there is nothing for the reader to
+                      anchor them to. The typed nudge still carries them — that
+                      end of the wire is the agent's. */}
                   {unsynced && (
                     <div className="banner unsynced">
-                      <span>
-                        {t.unsyncedBanner(
-                          goal.agent_synced_version,
-                          goal.contract_version,
-                        )}
-                      </span>
+                      <span>{t.unsyncedBanner}</span>
                       <button onClick={pushToAgent}>{t.sendToAgent}</button>
                     </div>
                   )}
@@ -1306,9 +1302,12 @@ export default function App() {
                           })}
 
                           {/* No approve button: the agent's work is presumed
-                              correct, so the human only acts on disagreement —
-                              and the note has to say the agent isn't waiting,
-                              or the row reads as a verdict being demanded.
+                              correct, so the human only acts on disagreement.
+                              The line of prose that used to sit above this
+                              button — "the agent isn't waiting for you" — is
+                              gone: the goal's own banner says it once, and
+                              repeating it under every subjective item is the
+                              reading load principle 4 exists to cut.
                               Gone with the session, too: sending an item back
                               does its whole work at a stop that will never come,
                               so offering it would be theatre. Edit and waive
@@ -1319,9 +1318,6 @@ export default function App() {
                             goal.status !== "closed" &&
                             !ended && (
                               <div className="ruling">
-                                <span className="ruling-note">
-                                  {t.rulingNote}
-                                </span>
                                 <button
                                   className={`reject ${st === "rejected" ? "active" : ""}`}
                                   title={t.sendItBackTitle}

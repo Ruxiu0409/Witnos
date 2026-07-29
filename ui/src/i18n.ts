@@ -168,8 +168,12 @@ const en = {
   // so a correction can run now instead of waiting for the agent's next stop).
   // Only YOUR edits raise this — the agent bumps the version itself all run
   // long, and a banner that fired on its own bookkeeping would be pure noise.
-  unsyncedBanner: (seen: number, now: number) =>
-    `Your change hasn't reached the agent yet — it last read v${seen}, your contract is v${now}. Its next stop is blocked until it reads the change and reconciles — or reach it now:`,
+  // No version numbers and no "reconcile": both are the agent's vocabulary, and
+  // nothing else in this window ever shows a v-number to anchor them to, so they
+  // read as a machine talking about itself. What the human can act on is that
+  // the edit hasn't landed yet, and the button that lands it.
+  unsyncedBanner:
+    "Your change hasn't reached the agent yet. Its next stop is blocked until it reads the change and answers it — or reach it now:",
   sendToAgent: "send it to the agent now",
   sentToAgent: "Sent — typed into the agent's terminal, so it has your change.",
   agentWorking:
@@ -195,11 +199,9 @@ const en = {
   stale: "stale",
   staleTitle: "The criterion was edited after this evidence was captured.",
   provTitle: "open the original (recorded as a drill-down)",
-  rulingNote:
-    "not waiting for you — edit it or send it back to reach the agent (that blocks its next stop)",
   sendItBack: "send it back",
   sendItBackTitle:
-    "Keeps the criterion, tells the agent its evidence doesn't pass. Bumps the contract version, so a running agent hears it too.",
+    "Keeps the criterion, tells the agent its evidence doesn't pass. An agent still running hears it too, without being interrupted.",
   waive: "don't check this",
   waiveTitle:
     "Waive this item: nobody checks it. The agent is no longer asked for evidence, and the gate ignores it.",
@@ -291,8 +293,8 @@ const zhHant: Messages = {
   // so a correction can run now instead of waiting for the agent's next stop).
   // Only YOUR edits raise this — the agent bumps the version itself all run
   // long, and a banner that fired on its own bookkeeping would be pure noise.
-  unsyncedBanner: (seen, now) =>
-    `你的修改還沒傳到代理手上——它最後讀到的是 v${seen}，你的契約已經是 v${now}。它下次想停下時會被攔住，直到它讀完變更並完成 reconcile——或者現在就送過去：`,
+  unsyncedBanner:
+    "你的修改還沒傳到代理手上。它下次想停下時會被攔住，直到它讀完你的修改並回應——或者現在就送過去：",
   sendToAgent: "立刻送到代理",
   sentToAgent: "已送出——已打進代理的終端機，它拿到你的修改了。",
   agentWorking:
@@ -317,11 +319,9 @@ const zhHant: Messages = {
   stale: "過時",
   staleTitle: "這項驗收條件在證據擷取之後被修改過。",
   provTitle: "開啟原始出處（會記錄為一次下鑽）",
-  rulingNote:
-    "代理不會等你裁決——編輯這個項目或把它退回，都會傳到它那邊，並攔住它下一次想停下。",
   sendItBack: "退回給代理",
   sendItBackTitle:
-    "保留這項條件，但告訴代理它的證據不算通過。會推進契約版本，所以執行中的代理也收得到。",
+    "保留這項條件，但告訴代理它的證據不算通過。還在跑的代理也收得到，而且不會被打斷。",
   waive: "不檢查這項",
   waiveTitle:
     "豁免這一項：沒有人會檢查它。不再要求代理提供證據，gate 也會忽略它。",
