@@ -94,6 +94,8 @@ const en = {
   watchingCount: (n: number) => `watching ${n} goal${n > 1 ? "s" : ""}`,
   expandSidebar: "expand sidebar",
   collapseSidebar: "collapse sidebar",
+  expandDetail: "expand detail pane",
+  collapseDetail: "collapse detail pane",
   resizeSidebar: "resize sidebar (double-click to reset)",
   resizeDetail: "resize detail pane (double-click to reset)",
   newGoalPlaceholder: "new goal title…",
@@ -118,15 +120,18 @@ const en = {
   confirm: "confirm",
   delete: "delete",
 
-  // auto-watched projects
-  projectsHeading: "auto-watched projects",
+  // projects (sidebar grouping)
+  projectsHeading: "projects",
   watchProjectAuto: "＋ watch a project (auto)",
   removeProject: "stop watching",
   confirmRemoveProject: (dir: string) =>
     `Stop auto-watching "${dir}"? Its session goals stop gating; the goals and their evidence stay.`,
   projectAddedNotice:
     "Hooks installed. Make sure Claude Code trusts this folder (new hooks may need /hooks approval). Every new agent session here gets its own goal from its first prompt.",
-  projectGoals: (n: number) => `${n} goal${n === 1 ? "" : "s"}`,
+  projectAutoOn: "auto-watching",
+  projectNotWatched: "not auto-watched",
+  noProjectHeading: "no project",
+  needsRulingDot: "awaiting your ruling",
   projectHint:
     "Open the terminal, run your agent (e.g. `claude`), and type a task — each new session gets its own goal, watchable here.",
   restartHere: "restart shell here",
@@ -185,6 +190,8 @@ const zhHant: Messages = {
   watchingCount: (n) => `正在監看 ${n} 個目標`,
   expandSidebar: "展開側欄",
   collapseSidebar: "收合側欄",
+  expandDetail: "展開詳情欄",
+  collapseDetail: "收合詳情欄",
   resizeSidebar: "調整側欄寬度（雙擊還原預設）",
   resizeDetail: "調整詳情欄寬度（雙擊還原預設）",
   newGoalPlaceholder: "新目標標題…",
@@ -207,15 +214,18 @@ const zhHant: Messages = {
   confirmDeleteGoal: (title) =>
     `確定刪除目標「${title}」？這會永久移除它的契約、證據與事件紀錄。`,
 
-  // auto-watched projects
-  projectsHeading: "自動監看的專案",
+  // projects (sidebar grouping)
+  projectsHeading: "專案",
   watchProjectAuto: "＋ 監看專案（自動）",
   removeProject: "停止監看",
   confirmRemoveProject: (dir) =>
     `停止自動監看「${dir}」？其 session 目標不再攔停；目標與證據會保留。`,
   projectAddedNotice:
     "Hooks 已裝好。請確認 Claude Code 信任這個資料夾（新 hooks 可能需要在 /hooks 核准）。之後在這裡的每個新 agent session，第一個 prompt 會自動建立各自的目標。",
-  projectGoals: (n) => `${n} 個目標`,
+  projectAutoOn: "自動監看中",
+  projectNotWatched: "未自動監看",
+  noProjectHeading: "未綁定專案",
+  needsRulingDot: "等你裁決",
   projectHint:
     "打開終端機、啟動你的 agent（例如 `claude`）、輸入任務——每個新 session 會自動建立自己的目標，在這裡即時監看。",
   restartHere: "在此重啟 shell",

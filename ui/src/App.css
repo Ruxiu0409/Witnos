@@ -17,7 +17,8 @@
   user-select: none;
 }
 
-.app.resizing .sidebar {
+.app.resizing .sidebar,
+.app.resizing .detail {
   transition: none;
 }
 
@@ -86,7 +87,8 @@
   width: 0;
 }
 
-.sidebar-toggle {
+.sidebar-toggle,
+.detail-toggle {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
@@ -96,7 +98,8 @@
   padding: 4px 7px;
 }
 
-.sidebar-toggle:hover {
+.sidebar-toggle:hover,
+.detail-toggle:hover {
   color: var(--text);
 }
 
@@ -130,8 +133,20 @@
   left: 54px;
 }
 
+/* The detail toggle's tooltip hangs leftward off the pane instead. */
+.detail-toggle .toggle-tip {
+  left: auto;
+  right: calc(min(var(--detail-w), 60vw) + 8px);
+}
+
+.detail.collapsed .detail-toggle .toggle-tip {
+  right: 54px;
+}
+
 .sidebar-toggle:hover .toggle-tip,
-.sidebar-toggle:focus-visible .toggle-tip {
+.sidebar-toggle:focus-visible .toggle-tip,
+.detail-toggle:hover .toggle-tip,
+.detail-toggle:focus-visible .toggle-tip {
   opacity: 1;
   visibility: visible;
   transition-delay: 0.25s;
@@ -303,12 +318,29 @@
   background: var(--panel2);
 }
 
-/* ---------- auto-watched projects ---------- */
+/* ---------- projects (sidebar grouping) ---------- */
 
 .proj-section {
   border-bottom: 1px solid var(--border);
   padding-bottom: 6px;
   margin-bottom: 6px;
+}
+
+/* Goals sit indented under their project row — belonging at a glance. */
+.goal-row.nested {
+  padding-left: 38px;
+}
+
+/* A goal awaiting the human's ruling (principle 6: don't let the moment
+   to rule slip past unnoticed). */
+.needs-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-left: 7px;
+  vertical-align: middle;
 }
 
 .watch-project {
@@ -411,9 +443,47 @@
 .detail {
   /* The vw clamp protects small windows from a wide persisted width. */
   width: min(var(--detail-w), 60vw);
+  min-width: min(var(--detail-w), 60vw);
   border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition:
+    width 0.18s ease,
+    min-width 0.18s ease;
+}
+
+.detail.collapsed {
+  width: 46px;
+  min-width: 46px;
+}
+
+.detail-head {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-start;
+  padding: 14px 10px 0;
+}
+
+.detail.collapsed .detail-head {
+  justify-content: center;
+  padding: 14px 6px 0;
+}
+
+/* Fixed inner width so the collapse animation clips instead of reflowing. */
+.detail-body {
+  flex: 1;
   overflow-y: auto;
-  padding: 18px 18px 60px;
+  padding: 4px 18px 60px;
+  width: min(var(--detail-w), 60vw);
+  transition:
+    opacity 0.12s ease,
+    visibility 0.12s;
+}
+
+.detail.collapsed .detail-body {
+  opacity: 0;
+  visibility: hidden;
 }
 
 /* ---------- pane resize handles ---------- */

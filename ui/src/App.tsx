@@ -31,7 +31,12 @@ function usePanelWidth(key: string, spec: WidthSpec) {
 }
 
 function basename(dir: string): string {
-  return dir.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || dir;
+  return (
+    dir
+      .replace(/[\\/]+$/, "")
+      .split(/[\\/]/)
+      .pop() || dir
+  );
 }
 
 export default function App() {
@@ -44,6 +49,9 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem("witnos.sidebar_collapsed") === "1",
+  );
+  const [detailCollapsed, setDetailCollapsed] = useState(
+    () => localStorage.getItem("witnos.detail_collapsed") === "1",
   );
   const [sidebarW, setSidebarW] = usePanelWidth(
     "witnos.sidebar_width",
@@ -165,6 +173,31 @@ export default function App() {
       },
     });
 
+  const goalRow = (g: api.GoalSummary, nested: boolean) => (
+    <button
+      key={g.id}
+      className={`goal-row ${nested ? "nested" : ""} ${sel === g.id ? "sel" : ""}`}
+      onClick={() => selectGoal(g.id)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setMenu({ x: e.clientX, y: e.clientY, goal: g });
+      }}
+    >
+      <span className="goal-title">
+        {g.title}
+        {g.status === "awaiting_rulings" && (
+          <span className="needs-dot" title={t.needsRulingDot} />
+        )}
+      </span>
+      <span className="goal-meta">
+        v{g.contract_version} · {t.goalStatus(g.status)}
+        {g.watching ? " · 👁" : ""}
+        {g.strong_bet_count > 0 ? ` · (b)×${g.strong_bet_count}` : ""}
+      </span>
+    </button>
+  );
+
   const createGoal = async () => {
     if (!newTitle.trim()) return;
     const g = await api.createGoal(newTitle.trim());
@@ -224,28 +257,51 @@ export default function App() {
     });
   }, []);
 
+  const toggleDetail = useCallback(() => {
+    setDetailCollapsed((c) => {
+      localStorage.setItem("witnos.detail_collapsed", c ? "0" : "1");
+      return !c;
+    });
+  }, []);
+
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
-      if (
-        e.metaKey &&
-        !e.ctrlKey &&
-        !e.altKey &&
-        !e.shiftKey &&
-        e.key.toLowerCase() === "s"
-      ) {
+      if (!e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      const k = e.key.toLowerCase();
+      if (k === "s") {
         e.preventDefault();
         toggleSidebar();
+      } else if (k === "d") {
+        e.preventDefault();
+        toggleDetail();
       }
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [toggleSidebar]);
+  }, [toggleSidebar, toggleDetail]);
 
   const watchingCount = goals.filter((g) => g.watching).length;
   const archivedGoals = goals.filter((g) => g.status === "closed");
-  const listedGoals = showArchive
-    ? archivedGoals
-    : goals.filter((g) => g.status !== "closed");
+  const activeGoals = goals.filter((g) => g.status !== "closed");
+
+  // Sidebar grouping: every goal sits under its project, so belonging is
+  // visible at a glance. Registered (auto-watched) projects come first,
+  // then dirs that only exist on goals, then project-less goals.
+  const goalsByDir = new Map<string, api.GoalSummary[]>();
+  const noDirGoals: api.GoalSummary[] = [];
+  for (const g of activeGoals) {
+    if (g.project_dir) {
+      const list = goalsByDir.get(g.project_dir) ?? [];
+      list.push(g);
+      goalsByDir.set(g.project_dir, list);
+    } else {
+      noDirGoals.push(g);
+    }
+  }
+  const registered = new Set(projects.map((p) => p.dir));
+  const extraDirs = [...goalsByDir.keys()]
+    .filter((d) => !registered.has(d))
+    .sort();
   const needsYou = goal
     ? goal.items.filter(
         (i) => i.class.kind === "subjective" && i.status === "laid",
@@ -329,32 +385,50 @@ export default function App() {
         <div className="goal-list">
           {!showArchive && (
             <div className="proj-section">
-              {projects.length > 0 && (
+              {(projects.length > 0 || extraDirs.length > 0) && (
                 <div className="archive-head">{t.projectsHeading}</div>
               )}
               {projects.map((p) => (
-                <button
-                  key={p.dir}
-                  className={`goal-row ${selProject === p.dir ? "sel" : ""}`}
-                  title={p.dir}
-                  onClick={() => selectProject(p.dir)}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setMenu({ x: e.clientX, y: e.clientY, project: p });
-                  }}
-                >
-                  <span className="goal-title">📁 {basename(p.dir)}</span>
-                  <span className="goal-meta">
-                    {t.projectGoals(p.goal_count)}
-                    {p.watching_count > 0 ? " · 👁" : ""}
-                  </span>
-                </button>
+                <div key={p.dir} className="proj-group">
+                  <button
+                    className={`goal-row ${selProject === p.dir ? "sel" : ""}`}
+                    title={p.dir}
+                    onClick={() => selectProject(p.dir)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setMenu({ x: e.clientX, y: e.clientY, project: p });
+                    }}
+                  >
+                    <span className="goal-title">📁 {basename(p.dir)}</span>
+                    <span className="goal-meta">👁 {t.projectAutoOn}</span>
+                  </button>
+                  {(goalsByDir.get(p.dir) ?? []).map((g) => goalRow(g, true))}
+                </div>
+              ))}
+              {extraDirs.map((dir) => (
+                <div key={dir} className="proj-group">
+                  <button
+                    className={`goal-row ${selProject === dir ? "sel" : ""}`}
+                    title={dir}
+                    onClick={() => selectProject(dir)}
+                  >
+                    <span className="goal-title">📁 {basename(dir)}</span>
+                    <span className="goal-meta">{t.projectNotWatched}</span>
+                  </button>
+                  {goalsByDir.get(dir)!.map((g) => goalRow(g, true))}
+                </div>
               ))}
               <button className="ghost watch-project" onClick={watchProject}>
                 {t.watchProjectAuto}
               </button>
             </div>
+          )}
+          {!showArchive && noDirGoals.length > 0 && (
+            <>
+              <div className="archive-head">{t.noProjectHeading}</div>
+              {noDirGoals.map((g) => goalRow(g, false))}
+            </>
           )}
           {showArchive && (
             <div className="archive-head">
@@ -364,25 +438,7 @@ export default function App() {
           {showArchive && archivedGoals.length === 0 && (
             <div className="list-empty">{t.archivedNone}</div>
           )}
-          {listedGoals.map((g) => (
-            <button
-              key={g.id}
-              className={`goal-row ${sel === g.id ? "sel" : ""}`}
-              onClick={() => selectGoal(g.id)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setMenu({ x: e.clientX, y: e.clientY, goal: g });
-              }}
-            >
-              <span className="goal-title">{g.title}</span>
-              <span className="goal-meta">
-                v{g.contract_version} · {t.goalStatus(g.status)}
-                {g.watching ? " · 👁" : ""}
-                {g.strong_bet_count > 0 ? ` · (b)×${g.strong_bet_count}` : ""}
-              </span>
-            </button>
-          ))}
+          {showArchive && archivedGoals.map((g) => goalRow(g, false))}
         </div>
         {!showArchive && (
           <div className="new-goal">
@@ -554,266 +610,328 @@ export default function App() {
 
       {workspaceView !== "settings" && (
         <>
-          <ResizeHandle
-            className="for-detail"
-            label={t.resizeDetail}
-            width={detailW}
-            spec={DETAIL_W}
-            dir={-1}
-            onWidth={setDetailW}
-            onResizing={setResizing}
-          />
-          <aside className="detail">
-            {!goal ? (
-              <div className="empty">
-                {selProject ? t.projectHint : t.selectAGoal}
+          {!detailCollapsed && (
+            <ResizeHandle
+              className="for-detail"
+              label={t.resizeDetail}
+              width={detailW}
+              spec={DETAIL_W}
+              dir={-1}
+              onWidth={setDetailW}
+              onResizing={setResizing}
+            />
+          )}
+          <aside className={`detail ${detailCollapsed ? "collapsed" : ""}`}>
+            <div className="detail-head">
+              <button
+                className="detail-toggle"
+                onClick={toggleDetail}
+                aria-label={detailCollapsed ? t.expandDetail : t.collapseDetail}
+                aria-expanded={!detailCollapsed}
+                aria-keyshortcuts="Meta+D"
+              >
+                {/* sidebar.right in the SF Symbols style; pane filled = detail shown */}
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <rect
+                    x="1.6"
+                    y="2.6"
+                    width="12.8"
+                    height="10.8"
+                    rx="2.2"
+                    stroke="currentColor"
+                    strokeWidth="1.2"
+                  />
+                  <path
+                    d="M9.8 2.6v10.8"
+                    stroke="currentColor"
+                    strokeWidth="1.2"
+                  />
+                  {!detailCollapsed && (
+                    <rect
+                      x="10.9"
+                      y="3.9"
+                      width="2.2"
+                      height="8.2"
+                      rx="0.9"
+                      fill="currentColor"
+                      opacity="0.55"
+                    />
+                  )}
+                </svg>
+                <span className="toggle-tip" aria-hidden="true">
+                  {detailCollapsed ? t.expandDetail : t.collapseDetail}
+                  <kbd>⌘D</kbd>
+                </span>
+              </button>
+            </div>
+            {detailCollapsed && needsYou.length > 0 && (
+              <div
+                className="rail-watching"
+                title={t.needsBanner(needsYou.length)}
+              >
+                ⚖ {needsYou.length}
               </div>
-            ) : (
-              <>
-                <header className="goal-head">
-                  <h2>{goal.title}</h2>
-                  <div className="goal-sub">
-                    {t.contractV(goal.contract_version)} ·{" "}
-                    {t.agentSyncedV(goal.agent_synced_version)} ·{" "}
-                    {t.goalStatus(goal.status)}
-                    {goal.project_dir ? ` · ${goal.project_dir}` : ""}
-                  </div>
-                  <div className="goal-actions">
-                    {goal.watching && (
-                      <button
-                        onClick={() => api.unwatchGoal(goal.id).then(refresh)}
-                      >
-                        {t.stopWatching}
-                      </button>
-                    )}
-                    {goal.status !== "closed" && (
-                      <button
-                        className="danger"
-                        onClick={() =>
-                          setConfirmBox({
-                            message: t.confirmCloseGoal,
-                            label: t.closeGoal,
-                            action: () => api.closeGoal(goal.id).then(refresh),
-                          })
-                        }
-                      >
-                        {t.closeGoal}
-                      </button>
-                    )}
-                  </div>
-                </header>
+            )}
+            <div className="detail-body">
+              {!goal ? (
+                <div className="empty">
+                  {selProject ? t.projectHint : t.selectAGoal}
+                </div>
+              ) : (
+                <>
+                  <header className="goal-head">
+                    <h2>{goal.title}</h2>
+                    <div className="goal-sub">
+                      {t.contractV(goal.contract_version)} ·{" "}
+                      {t.agentSyncedV(goal.agent_synced_version)} ·{" "}
+                      {t.goalStatus(goal.status)}
+                      {goal.project_dir ? ` · ${goal.project_dir}` : ""}
+                    </div>
+                    <div className="goal-actions">
+                      {goal.watching && (
+                        <button
+                          onClick={() => api.unwatchGoal(goal.id).then(refresh)}
+                        >
+                          {t.stopWatching}
+                        </button>
+                      )}
+                      {goal.status !== "closed" && (
+                        <button
+                          className="danger"
+                          onClick={() =>
+                            setConfirmBox({
+                              message: t.confirmCloseGoal,
+                              label: t.closeGoal,
+                              action: () =>
+                                api.closeGoal(goal.id).then(refresh),
+                            })
+                          }
+                        >
+                          {t.closeGoal}
+                        </button>
+                      )}
+                    </div>
+                  </header>
 
-                {goal.status === "closed" && (
-                  <div className="banner closed">{t.closedBanner}</div>
-                )}
-                {needsYou.length > 0 && (
-                  <div className="banner needs">
-                    {t.needsBanner(needsYou.length)}
-                  </div>
-                )}
+                  {goal.status === "closed" && (
+                    <div className="banner closed">{t.closedBanner}</div>
+                  )}
+                  {needsYou.length > 0 && (
+                    <div className="banner needs">
+                      {t.needsBanner(needsYou.length)}
+                    </div>
+                  )}
 
-                <section className="items">
-                  {goal.items.map((item) => {
-                    const evs = goal.evidence.filter(
-                      (e) => e.item_id === item.id,
-                    );
-                    const reinterpreted =
-                      item.interpretation_history.length > 1;
-                    return (
-                      <article
-                        key={item.id}
-                        className={`item ${
-                          item.status === "laid" &&
-                          item.class.kind === "subjective"
-                            ? "attention"
-                            : ""
-                        }`}
-                      >
-                        <div className="item-head">
-                          <span className={`chip ${item.class.kind}`}>
-                            {t.itemClass(item.class.kind)}
-                          </span>
-                          <span className={`chip status-${item.status}`}>
-                            {t.itemStatus(item.status)}
-                          </span>
-                          {reinterpreted && (
-                            <span
-                              className="chip reinterpreted"
-                              title={t.reinterpretedTitle}
-                            >
-                              {t.reinterpreted(
-                                item.interpretation_history.length - 1,
-                              )}
+                  <section className="items">
+                    {goal.items.map((item) => {
+                      const evs = goal.evidence.filter(
+                        (e) => e.item_id === item.id,
+                      );
+                      const reinterpreted =
+                        item.interpretation_history.length > 1;
+                      return (
+                        <article
+                          key={item.id}
+                          className={`item ${
+                            item.status === "laid" &&
+                            item.class.kind === "subjective"
+                              ? "attention"
+                              : ""
+                          }`}
+                        >
+                          <div className="item-head">
+                            <span className={`chip ${item.class.kind}`}>
+                              {t.itemClass(item.class.kind)}
                             </span>
-                          )}
-                          <span
-                            className="chip origin"
-                            title={t.originTitle(
-                              t.originKind(item.origin.kind),
+                            <span className={`chip status-${item.status}`}>
+                              {t.itemStatus(item.status)}
+                            </span>
+                            {reinterpreted && (
+                              <span
+                                className="chip reinterpreted"
+                                title={t.reinterpretedTitle}
+                              >
+                                {t.reinterpreted(
+                                  item.interpretation_history.length - 1,
+                                )}
+                              </span>
                             )}
-                          >
-                            {t.originKind(item.origin.kind)}
-                          </span>
-                          <span className="spacer" />
-                          {goal.status !== "closed" && editing !== item.id && (
+                            <span
+                              className="chip origin"
+                              title={t.originTitle(
+                                t.originKind(item.origin.kind),
+                              )}
+                            >
+                              {t.originKind(item.origin.kind)}
+                            </span>
+                            <span className="spacer" />
+                            {goal.status !== "closed" &&
+                              editing !== item.id && (
+                                <button
+                                  className="ghost"
+                                  onClick={() => {
+                                    setEditing(item.id);
+                                    setEditClaim(item.claim);
+                                    setEditCheck(item.check);
+                                  }}
+                                >
+                                  {t.edit}
+                                </button>
+                              )}
+                          </div>
+
+                          {editing === item.id ? (
+                            <div className="edit-form">
+                              <input
+                                placeholder={t.claimPlaceholder}
+                                value={editClaim}
+                                onChange={(e) => setEditClaim(e.target.value)}
+                              />
+                              <input
+                                placeholder={t.checkPlaceholder}
+                                value={editCheck}
+                                onChange={(e) => setEditCheck(e.target.value)}
+                              />
+                              <div>
+                                <button onClick={() => saveEdit(item.id)}>
+                                  {t.saveReopens}
+                                </button>
+                                <button
+                                  className="ghost"
+                                  onClick={() => setEditing(null)}
+                                >
+                                  {t.cancel}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <div className="claim">{item.claim}</div>
+                              {item.check && (
+                                <div className="check">
+                                  {t.checkLine(item.check)}
+                                </div>
+                              )}
+                            </>
+                          )}
+
+                          {item.interpretation && (
+                            <div className="interp">
+                              <span className="interp-label">
+                                {t.agentReadsThisAs}
+                              </span>{" "}
+                              {item.interpretation}
+                            </div>
+                          )}
+
+                          {evs.map((ev) => {
+                            const stale =
+                              ev.against_version < item.last_edited_version;
+                            return (
+                              <div
+                                key={ev.id}
+                                className={`evidence ${viewing === ev.id ? "viewing" : ""}`}
+                                onClick={() => setViewing(ev.id)}
+                              >
+                                <div className="ev-head">
+                                  <span className="ev-conclusion">
+                                    {ev.conclusion}
+                                  </span>
+                                  <span className="chip">
+                                    {t.againstV(ev.against_version)}
+                                  </span>
+                                  {stale && (
+                                    <span
+                                      className="chip stale"
+                                      title={t.staleTitle}
+                                    >
+                                      {t.stale}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="ev-basis">{ev.basis}</div>
+                                <div className="ev-prov">
+                                  {ev.provenance.map((p, idx) => (
+                                    <button
+                                      key={idx}
+                                      className="prov"
+                                      title={t.provTitle}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        drill(item, ev, p);
+                                      }}
+                                    >
+                                      {p.kind === "file"
+                                        ? `📄 ${p.path}${p.lines ? `:${p.lines}` : ""}`
+                                        : p.kind === "url"
+                                          ? `🔗 ${p.url}`
+                                          : `$ ${p.cmd}`}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })}
+
+                          {item.class.kind === "subjective" &&
+                            ["laid", "approved", "rejected"].includes(
+                              item.status,
+                            ) &&
+                            goal.status !== "closed" && (
+                              <div className="ruling">
+                                <button
+                                  className={`approve ${item.status === "approved" ? "active" : ""}`}
+                                  onClick={() => rule(item, true)}
+                                >
+                                  ✓ {t.approve}
+                                </button>
+                                <button
+                                  className={`reject ${item.status === "rejected" ? "active" : ""}`}
+                                  onClick={() => rule(item, false)}
+                                >
+                                  ✗ {t.reject}
+                                </button>
+                              </div>
+                            )}
+                        </article>
+                      );
+                    })}
+                  </section>
+
+                  {goal.status !== "closed" && (
+                    <section className="add-item">
+                      <h3>{t.addItemHeading}</h3>
+                      <input
+                        placeholder={t.claimPlaceholder}
+                        value={newClaim}
+                        onChange={(e) => setNewClaim(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && addItem()}
+                      />
+                      <div className="add-row">
+                        <button onClick={addItem}>{t.addSubjective}</button>
+                        <span className="origin-note">
+                          {t.recordedAs(originNote)}
+                          {viewing && (
                             <button
                               className="ghost"
-                              onClick={() => {
-                                setEditing(item.id);
-                                setEditClaim(item.claim);
-                                setEditCheck(item.check);
-                              }}
+                              onClick={() => setViewing(null)}
                             >
-                              {t.edit}
+                              {t.clear}
                             </button>
                           )}
-                        </div>
-
-                        {editing === item.id ? (
-                          <div className="edit-form">
-                            <input
-                              placeholder={t.claimPlaceholder}
-                              value={editClaim}
-                              onChange={(e) => setEditClaim(e.target.value)}
-                            />
-                            <input
-                              placeholder={t.checkPlaceholder}
-                              value={editCheck}
-                              onChange={(e) => setEditCheck(e.target.value)}
-                            />
-                            <div>
-                              <button onClick={() => saveEdit(item.id)}>
-                                {t.saveReopens}
-                              </button>
-                              <button
-                                className="ghost"
-                                onClick={() => setEditing(null)}
-                              >
-                                {t.cancel}
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <>
-                            <div className="claim">{item.claim}</div>
-                            {item.check && (
-                              <div className="check">
-                                {t.checkLine(item.check)}
-                              </div>
-                            )}
-                          </>
-                        )}
-
-                        {item.interpretation && (
-                          <div className="interp">
-                            <span className="interp-label">
-                              {t.agentReadsThisAs}
-                            </span>{" "}
-                            {item.interpretation}
-                          </div>
-                        )}
-
-                        {evs.map((ev) => {
-                          const stale =
-                            ev.against_version < item.last_edited_version;
-                          return (
-                            <div
-                              key={ev.id}
-                              className={`evidence ${viewing === ev.id ? "viewing" : ""}`}
-                              onClick={() => setViewing(ev.id)}
-                            >
-                              <div className="ev-head">
-                                <span className="ev-conclusion">
-                                  {ev.conclusion}
-                                </span>
-                                <span className="chip">
-                                  {t.againstV(ev.against_version)}
-                                </span>
-                                {stale && (
-                                  <span
-                                    className="chip stale"
-                                    title={t.staleTitle}
-                                  >
-                                    {t.stale}
-                                  </span>
-                                )}
-                              </div>
-                              <div className="ev-basis">{ev.basis}</div>
-                              <div className="ev-prov">
-                                {ev.provenance.map((p, idx) => (
-                                  <button
-                                    key={idx}
-                                    className="prov"
-                                    title={t.provTitle}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      drill(item, ev, p);
-                                    }}
-                                  >
-                                    {p.kind === "file"
-                                      ? `📄 ${p.path}${p.lines ? `:${p.lines}` : ""}`
-                                      : p.kind === "url"
-                                        ? `🔗 ${p.url}`
-                                        : `$ ${p.cmd}`}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          );
-                        })}
-
-                        {item.class.kind === "subjective" &&
-                          ["laid", "approved", "rejected"].includes(
-                            item.status,
-                          ) &&
-                          goal.status !== "closed" && (
-                            <div className="ruling">
-                              <button
-                                className={`approve ${item.status === "approved" ? "active" : ""}`}
-                                onClick={() => rule(item, true)}
-                              >
-                                ✓ {t.approve}
-                              </button>
-                              <button
-                                className={`reject ${item.status === "rejected" ? "active" : ""}`}
-                                onClick={() => rule(item, false)}
-                              >
-                                ✗ {t.reject}
-                              </button>
-                            </div>
-                          )}
-                      </article>
-                    );
-                  })}
-                </section>
-
-                {goal.status !== "closed" && (
-                  <section className="add-item">
-                    <h3>{t.addItemHeading}</h3>
-                    <input
-                      placeholder={t.claimPlaceholder}
-                      value={newClaim}
-                      onChange={(e) => setNewClaim(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && addItem()}
-                    />
-                    <div className="add-row">
-                      <button onClick={addItem}>{t.addSubjective}</button>
-                      <span className="origin-note">
-                        {t.recordedAs(originNote)}
-                        {viewing && (
-                          <button
-                            className="ghost"
-                            onClick={() => setViewing(null)}
-                          >
-                            {t.clear}
-                          </button>
-                        )}
-                      </span>
-                    </div>
-                  </section>
-                )}
-              </>
-            )}
+                        </span>
+                      </div>
+                    </section>
+                  )}
+                </>
+              )}
+            </div>
           </aside>
         </>
       )}
