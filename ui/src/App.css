@@ -873,7 +873,6 @@
   gap: 8px;
   padding: 3px 10px;
   flex: 0 0 auto;
-  border-bottom: 1px solid var(--border);
   background: var(--panel);
   font-size: 12px;
 }
@@ -886,10 +885,12 @@
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
+/* Invisible until you go for it — the shells are already told apart by their
+   head strips, so a drawn line between them is only in the way. */
 .term-splitter {
   flex: 0 0 auto;
   height: 4px;
-  background: var(--border);
+  background: transparent;
   cursor: row-resize;
   transition: background 120ms ease;
 }
@@ -958,7 +959,6 @@ body.row-resizing * {
   align-items: center;
   gap: 8px;
   padding: 3px 10px;
-  border-bottom: 1px solid var(--border);
   background: var(--panel);
   font-size: 12px;
 }
@@ -982,8 +982,7 @@ body.row-resizing * {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--border);
+  padding: 14px 0;
 }
 
 .setting-label {
