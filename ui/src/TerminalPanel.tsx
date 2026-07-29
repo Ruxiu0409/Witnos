@@ -110,6 +110,12 @@ export type PaneActivity = "working" | "idle" | "unknown" | "gone";
  *  `pane` recorded on a goal's session), not the React-side pane key. */
 export type ActivityProbe = (shellId: number) => PaneActivity;
 
+/** "Give me a shell in this directory, focused." Handed up to the app the same
+ *  way the activity probe is, for the gestures outside this panel that end a
+ *  session and so need a new one (closing a goal). False if the stack had no
+ *  room for another pane — the one case where the caller got no shell. */
+export type ShellOpener = (dir: string | null) => boolean;
+
 // Claude Code publishes its own state in the title it sets: "✳ …" while it is
 // working, "· Claude Code" when it is waiting on you. Read it as a hint only —
 // another agent, a shell with its own title, or a future Claude Code that
@@ -160,13 +166,27 @@ type Pane = {
   weight: number;
 };
 
+function trimDir(dir: string): string {
+  return dir.replace(/[\\/]+$/, "");
+}
+
 function basename(dir: string): string {
-  return (
-    dir
-      .replace(/[\\/]+$/, "")
-      .split(/[\\/]/)
-      .pop() || dir
-  );
+  return trimDir(dir).split(/[\\/]/).pop() || dir;
+}
+
+/** The same directory, a trailing separator aside. */
+function sameDir(dir: string | null, other: string): boolean {
+  return dir !== null && trimDir(dir) === trimDir(other);
+}
+
+/** `dir` is somewhere inside `root`. A shell the human walked down into a
+ *  subdirectory is still that project's terminal, so it counts as one when we
+ *  ask whether the project already has a shell. */
+function insideDir(dir: string | null, root: string): boolean {
+  if (dir === null) return false;
+  const d = trimDir(dir);
+  const r = trimDir(root);
+  return d.length > r.length && d.startsWith(r) && /[\\/]/.test(d[r.length]);
 }
 
 /** OSC 7 carries the cwd as a file URL: file://host/path/to/dir. */
@@ -440,6 +460,7 @@ export default function TerminalPanel({
   t,
   appearance,
   bindActivity,
+  bindOpen,
   hidden = false,
 }: {
   cwd: string | null;
@@ -450,6 +471,9 @@ export default function TerminalPanel({
   // an agent retitles its pane every few seconds while it works, and none of
   // that should re-render anything outside this panel.
   bindActivity: (probe: ActivityProbe | null) => void;
+  // Same shape, other direction: lets the owner ask for a shell somewhere
+  // without it having to know anything about panes.
+  bindOpen: (open: ShellOpener | null) => void;
   // Hide instead of unmount: the shells must survive workspace view switches.
   hidden?: boolean;
 }) {
@@ -470,6 +494,8 @@ export default function TerminalPanel({
   panesRef.current = panes;
   const focusedRef = useRef(focused);
   focusedRef.current = focused;
+  const cwdRef = useRef(cwd);
+  cwdRef.current = cwd;
 
   const bindApi = useCallback((key: number, api: PaneApi | null) => {
     if (!api) {
@@ -493,6 +519,10 @@ export default function TerminalPanel({
   // each — the replay is what makes a terminal look as it was left, agent and
   // all. A fresh shell opens only when nothing survived. Asked once per panel:
   // which shells exist is a property of the machine, not of a render.
+  //
+  // Read through the ref, not the closure: the census is in flight while the
+  // human is free to click a project, and the first pane should open where they
+  // are now, not where the panel mounted.
   useEffect(() => {
     let alive = true;
     invoke<PaneInfo[]>("term_list")
@@ -501,7 +531,7 @@ export default function TerminalPanel({
         setPanes(
           existing.length > 0
             ? existing.map((info) => restoredPane(info, 1))
-            : [newPane(cwd, 1)],
+            : [newPane(cwdRef.current, 1)],
         );
         setRestored(true);
       })
@@ -509,7 +539,7 @@ export default function TerminalPanel({
         // Nothing could be listed, so nothing can be restored; the pane that
         // opens here will report its own failure if the backend is really gone.
         if (!alive) return;
-        setPanes([newPane(cwd, 1)]);
+        setPanes([newPane(cwdRef.current, 1)]);
         setRestored(true);
       });
     return () => {
@@ -539,18 +569,20 @@ export default function TerminalPanel({
 
   // A new pane opens in the selected project's directory — the same rule the
   // first pane and "restart here" already follow — falling back to where the
-  // pane it split from is.
+  // pane it split from is. `dir` overrides that for a caller who names the
+  // directory outright (see openIn), which is not the same as the selection.
   const split = useCallback(
-    (fromKey?: number) => {
+    (fromKey?: number, dir?: string | null) => {
       const list = panesRef.current;
       const i = list.findIndex(
         (p) => p.key === (fromKey ?? focusedRef.current),
       );
       const src = list[i < 0 ? 0 : i];
-      if (!src) return;
+      if (!src) return false;
       const stack = stackRef.current;
-      if (stack && stack.clientHeight < MIN_PANE_PX * (list.length + 1)) return;
-      const pane = newPane(cwd ?? src.liveCwd ?? src.cwd, src.weight / 2);
+      if (stack && stack.clientHeight < MIN_PANE_PX * (list.length + 1))
+        return false;
+      const pane = newPane(dir ?? cwd ?? src.liveCwd ?? src.cwd, src.weight / 2);
       setFocused(pane.key); // bindApi focuses it the moment it mounts
       setPanes((prev) => {
         const j = prev.findIndex((p) => p.key === src.key);
@@ -560,6 +592,7 @@ export default function TerminalPanel({
         out.splice(j + 1, 0, pane);
         return out;
       });
+      return true;
     },
     [cwd],
   );
@@ -605,7 +638,7 @@ export default function TerminalPanel({
   }, []);
 
   const restart = useCallback(
-    (key: number) => {
+    (key: number, dir?: string | null) => {
       // The human asked for a new shell here, so the old one ends — otherwise it
       // would keep running in the daemon with nothing attached to it. Clearing
       // shellId is what makes the remount open a fresh session instead of
@@ -618,7 +651,7 @@ export default function TerminalPanel({
             ? {
                 ...p,
                 shellId: null,
-                cwd: cwd ?? p.liveCwd ?? p.cwd,
+                cwd: dir ?? cwd ?? p.liveCwd ?? p.cwd,
                 liveCwd: null,
                 title: null,
                 exited: false,
@@ -632,20 +665,68 @@ export default function TerminalPanel({
     [cwd],
   );
 
-  // Picking a project in the sidebar walks the shell you're typing in over to
-  // it — the same `cd` you'd type, so the pane keeps its scrollback and its
-  // process. Only the focused pane moves: panes are separate workspaces, and
-  // a stack deliberately spread across directories shouldn't collapse onto one
-  // click. A pane that's running something is left strictly alone (term_try_cd
-  // refuses rather than typing into an agent); the header's "restart here"
-  // button stays as the deliberate way in.
+  // "Give me a shell in this directory" from outside the panel. A goal is bound
+  // to one agent session and a session id never comes back, so closing a goal
+  // means the next one in that project needs a shell of its own — and it must be
+  // a *new* shell, not a cd: /clear or a fresh session is exactly what starts
+  // the next goal.
+  //
+  // A pane whose shell already exited is reused, because there is nothing there
+  // to preserve; anything alive is left alone and this splits instead. In
+  // particular the closed goal's own pane keeps running with its transcript
+  // intact — that is the record of the work just finished, and ✕ or restart stay
+  // the only things that end a shell. A stack with no room for another pane
+  // declines, the same way ⌘D does.
+  const openIn = useCallback<ShellOpener>(
+    (dir) => {
+      const dead = panesRef.current.find((p) => p.exited);
+      if (dead) {
+        restart(dead.key, dir);
+        return true;
+      }
+      return split(undefined, dir);
+    },
+    [restart, split],
+  );
+
+  useEffect(() => {
+    bindOpen(openIn);
+    return () => bindOpen(null);
+  }, [bindOpen, openIn]);
+
+  // Picking a project in the sidebar means "put me in this project": its own
+  // shell, not the one you were typing in walked over. A pane is a workspace —
+  // it holds an agent, a transcript, a place in a directory — so switching
+  // projects opens a pane in the new one and leaves the old one standing, the
+  // way clicking a project in an editor does. Clicking back finds that pane
+  // again rather than a second one: a shell already sitting in the project
+  // (or somewhere under it, if you cd'd into a crate) IS that project's
+  // terminal, so it is focused instead.
+  //
+  // The `cd` walk survives as the last resort for a stack with no room for
+  // another pane — there the choice is between moving a shell and the click
+  // meaning nothing, and it still refuses to type at a pane running something.
   const targeted = useRef(cwd);
   useEffect(() => {
-    if (cwd === null || cwd === targeted.current) return;
+    // Before the census lands this panel knows of no panes, so it cannot tell
+    // "no shell is in that project" from "no shell is known yet" — and would
+    // open a duplicate of one it is about to restore. The selection waits here
+    // and is handled when `restored` flips.
+    if (!restored || cwd === null || cwd === targeted.current) return;
     targeted.current = cwd;
+    const live = panesRef.current.filter((p) => !p.exited);
+    const here =
+      live.find((p) => sameDir(p.liveCwd ?? p.cwd, cwd)) ??
+      live.find((p) => insideDir(p.liveCwd ?? p.cwd, cwd));
+    if (here) {
+      setFocused(here.key);
+      apis.current.get(here.key)?.focus();
+      return;
+    }
+    if (openIn(cwd)) return;
     const key = focusedRef.current;
     const pane = panesRef.current.find((p) => p.key === key);
-    if (!pane || (pane.liveCwd ?? pane.cwd) === cwd) return;
+    if (!pane) return;
     if (pane.exited) {
       restart(key); // dead shell: nothing to preserve, reopen it in the new dir
       return;
@@ -658,7 +739,7 @@ export default function TerminalPanel({
       // the directory they were spawned in.
       .then((moved) => moved && patch(key, { cwd, liveCwd: null }))
       .catch(() => {});
-  }, [cwd, restart, patch]);
+  }, [cwd, restored, openIn, restart, patch]);
 
   useEffect(() => {
     if (hidden) return;

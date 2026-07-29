@@ -2,7 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as api from "./api";
-import TerminalPanel, { type ActivityProbe } from "./TerminalPanel";
+import TerminalPanel, {
+  type ActivityProbe,
+  type ShellOpener,
+} from "./TerminalPanel";
 import ResizeHandle, { type WidthSpec } from "./ResizeHandle";
 import Picker from "./Picker";
 import Icon from "./Icon";
@@ -171,6 +174,13 @@ export default function App() {
   const paneActivity = useRef<ActivityProbe | null>(null);
   const bindActivity = useCallback((probe: ActivityProbe | null) => {
     paneActivity.current = probe;
+  }, []);
+  // The other direction: how a gesture out here (closing a goal) asks the
+  // workspace for a shell. Null while the panel is unmounted, in which case
+  // there is no workspace to open one in.
+  const openShell = useRef<ShellOpener | null>(null);
+  const bindOpen = useCallback((open: ShellOpener | null) => {
+    openShell.current = open;
   }, []);
   // The goal we last sampled as having no live pane left (see sessionGone). Its
   // agent is unreachable for good, which is what the detail pane has to say and
@@ -456,8 +466,19 @@ export default function App() {
     setConfirmBox({
       message: t.confirmCloseGoal(g.title),
       label: t.closeGoal,
-      action: () => {
-        api.closeGoal(g.id).then(refresh).catch(failed);
+      action: async () => {
+        try {
+          await api.closeGoal(g.id);
+          // Closing a goal is the end of an issuance, and the next one in that
+          // project needs its own agent session — which means its own shell,
+          // since a session id never comes back. The workspace opens it rather
+          // than leaving it as a step to remember; the closed goal's own pane is
+          // untouched, so its transcript stays there to read.
+          if (g.project_dir) openShell.current?.(g.project_dir);
+          refresh();
+        } catch (e) {
+          failed(e);
+        }
       },
     });
 
@@ -1013,6 +1034,7 @@ export default function App() {
           t={t}
           appearance={appearance}
           bindActivity={bindActivity}
+          bindOpen={bindOpen}
           hidden={workspaceView !== "terminal"}
         />
         {workspaceView === "settings" && (
