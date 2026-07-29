@@ -75,7 +75,6 @@ export interface Goal {
 
 export const listGoals = () => invoke<GoalSummary[]>("list_goals");
 export const getGoal = (id: string) => invoke<Goal>("get_goal", { id });
-export const createGoal = (title: string) => invoke<Goal>("create_goal", { title });
 
 export const addItem = (
   goalId: string,

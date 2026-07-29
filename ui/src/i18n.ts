@@ -98,8 +98,6 @@ const en = {
   collapseDetail: "collapse detail pane",
   resizeSidebar: "resize sidebar (double-click to reset)",
   resizeDetail: "resize detail pane (double-click to reset)",
-  newGoalPlaceholder: "new goal title…",
-  create: "create",
   terminal: "terminal",
   restartShell: "restart shell",
   shellExited: "[shell exited]",
@@ -128,7 +126,6 @@ const en = {
     `Stop auto-watching "${dir}"? Its session goals stop gating; the goals and their evidence stay.`,
   projectAddedNotice:
     "Hooks installed. Make sure Claude Code trusts this folder (new hooks may need /hooks approval). Every new agent session here gets its own goal from its first prompt.",
-  projectAutoOn: "auto-watching",
   projectNotWatched: "not auto-watched",
   noProjectHeading: "no project",
   needsRulingDot: "awaiting your ruling",
@@ -138,8 +135,6 @@ const en = {
 
   // goal detail
   selectAGoal: "select a goal",
-  contractV: (n: number) => `contract v${n}`,
-  agentSyncedV: (n: number) => `agent synced v${n}`,
   goalStatus: (s: string) => GOAL_STATUS_EN[s] ?? s.replaceAll("_", " "),
   stopWatching: "stop watching",
   closeGoal: "close goal",
@@ -162,7 +157,6 @@ const en = {
   cancel: "cancel",
   checkLine: (c: string) => `check: ${c}`,
   agentReadsThisAs: "agent reads this as:",
-  againstV: (n: number) => `against v${n}`,
   stale: "stale",
   staleTitle: "The criterion was edited after this evidence was captured.",
   provTitle: "open the original (recorded as a drill-down)",
@@ -194,8 +188,6 @@ const zhHant: Messages = {
   collapseDetail: "收合詳情欄",
   resizeSidebar: "調整側欄寬度（雙擊還原預設）",
   resizeDetail: "調整詳情欄寬度（雙擊還原預設）",
-  newGoalPlaceholder: "新目標標題…",
-  create: "建立",
   terminal: "終端機",
   restartShell: "重啟 shell",
   shellExited: "[shell 已結束]",
@@ -222,7 +214,6 @@ const zhHant: Messages = {
     `停止自動監看「${dir}」？其 session 目標不再攔停；目標與證據會保留。`,
   projectAddedNotice:
     "Hooks 已裝好。請確認 Claude Code 信任這個資料夾（新 hooks 可能需要在 /hooks 核准）。之後在這裡的每個新 agent session，第一個 prompt 會自動建立各自的目標。",
-  projectAutoOn: "自動監看中",
   projectNotWatched: "未自動監看",
   noProjectHeading: "未綁定專案",
   needsRulingDot: "等你裁決",
@@ -234,8 +225,6 @@ const zhHant: Messages = {
 
   // goal detail
   selectAGoal: "選擇一個目標",
-  contractV: (n) => `契約 v${n}`,
-  agentSyncedV: (n) => `代理已同步 v${n}`,
   goalStatus: (s) => GOAL_STATUS_ZH[s] ?? s.replaceAll("_", " "),
   stopWatching: "停止監看",
   closeGoal: "關閉目標",
@@ -257,7 +246,6 @@ const zhHant: Messages = {
   cancel: "取消",
   checkLine: (c) => `檢核方式：${c}`,
   agentReadsThisAs: "代理對此的解讀：",
-  againstV: (n) => `對照 v${n}`,
   stale: "過時",
   staleTitle: "這項驗收條件在證據擷取之後被修改過。",
   provTitle: "開啟原始出處（會記錄為一次下鑽）",

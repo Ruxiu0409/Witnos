@@ -190,7 +190,6 @@
 
 /* Fixed inner width so the collapse animation clips instead of reflowing. */
 .sidebar .goal-list,
-.sidebar .new-goal,
 .sidebar .err,
 .sidebar .notice {
   width: var(--sidebar-w);
@@ -200,7 +199,6 @@
 }
 
 .sidebar.collapsed .goal-list,
-.sidebar.collapsed .new-goal,
 .sidebar.collapsed .err,
 .sidebar.collapsed .notice {
   opacity: 0;
@@ -279,18 +277,6 @@
   color: var(--dim);
   font-size: 12px;
   margin-top: 2px;
-}
-
-.new-goal {
-  display: flex;
-  gap: 6px;
-  padding: 10px;
-  border-top: 1px solid var(--border);
-}
-
-.new-goal input {
-  flex: 1;
-  min-width: 0;
 }
 
 .err {

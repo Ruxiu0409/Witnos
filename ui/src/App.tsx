@@ -88,7 +88,6 @@ export default function App() {
   // Items whose evidence originals were opened this session (per-ruling flag).
   const drilled = useRef<Set<string>>(new Set());
 
-  const [newTitle, setNewTitle] = useState("");
   const [newClaim, setNewClaim] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [editClaim, setEditClaim] = useState("");
@@ -191,20 +190,12 @@ export default function App() {
         )}
       </span>
       <span className="goal-meta">
-        v{g.contract_version} · {t.goalStatus(g.status)}
+        {t.goalStatus(g.status)}
         {g.watching ? " · 👁" : ""}
         {g.strong_bet_count > 0 ? ` · (b)×${g.strong_bet_count}` : ""}
       </span>
     </button>
   );
-
-  const createGoal = async () => {
-    if (!newTitle.trim()) return;
-    const g = await api.createGoal(newTitle.trim());
-    setNewTitle("");
-    selectGoal(g.id);
-    refresh();
-  };
 
   const removeGoal = (g: api.GoalSummary) =>
     setConfirmBox({
@@ -401,7 +392,6 @@ export default function App() {
                     }}
                   >
                     <span className="goal-title">📁 {basename(p.dir)}</span>
-                    <span className="goal-meta">👁 {t.projectAutoOn}</span>
                   </button>
                   {(goalsByDir.get(p.dir) ?? []).map((g) => goalRow(g, true))}
                 </div>
@@ -440,17 +430,6 @@ export default function App() {
           )}
           {showArchive && archivedGoals.map((g) => goalRow(g, false))}
         </div>
-        {!showArchive && (
-          <div className="new-goal">
-            <input
-              placeholder={t.newGoalPlaceholder}
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && createGoal()}
-            />
-            <button onClick={createGoal}>{t.create}</button>
-          </div>
-        )}
         {err && <div className="err">{err}</div>}
         {notice && (
           <button
@@ -688,8 +667,6 @@ export default function App() {
                   <header className="goal-head">
                     <h2>{goal.title}</h2>
                     <div className="goal-sub">
-                      {t.contractV(goal.contract_version)} ·{" "}
-                      {t.agentSyncedV(goal.agent_synced_version)} ·{" "}
                       {t.goalStatus(goal.status)}
                       {goal.project_dir ? ` · ${goal.project_dir}` : ""}
                     </div>
@@ -842,9 +819,6 @@ export default function App() {
                                 <div className="ev-head">
                                   <span className="ev-conclusion">
                                     {ev.conclusion}
-                                  </span>
-                                  <span className="chip">
-                                    {t.againstV(ev.against_version)}
                                   </span>
                                   {stale && (
                                     <span
