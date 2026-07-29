@@ -4,7 +4,7 @@
 
 讓 AI coding agent 的「驗證」這一步從黑盒變透明、且能由人**即時協作編輯**的工具。
 
-**狀態：v1 實作進行中（2026-07-26 動工）。** 本檔記錄設計脈絡與待驗證假設。已落地：hooks 行為 spike（`spike/hooks-2026-07-26/`）、契約 schema（`docs/schema-v1.md`）、Rust workspace——`witnos-core`（型別／store／放行條件）、`witnos-server`（axum 核心，lib 形式、GUI 外殼內嵌）、headless bin `witnos`（雙 hook＋agent 子命令）、Tauri 外殼與前端。未動工：主觀判斷 prompt hook。（`witnos init`、UserPromptSubmit 綁定＋協議注入 hook、`witnos goal new` 已落地；契約書寫規範由 UserPromptSubmit hook 每 session 注入一次，不寫進任何檔案。**2026-07-29 落地 auto 模式**：在 app 選一個專案目錄開「自動監看」後，**在 app 內建終端機裡啟動的** agent session，第一個 prompt 自動建立該 session 專屬的目標並上膛；在其他終端機裡啟動的 session 不在範圍內——不建目標、不注入協議、也不會被攔停（範圍記號 `WITNOS_TERMINAL`，app 開的每個 shell 都蓋上，agent 與它跑的 hook 都繼承得到）。marker 升級為 session-keyed 的 v2、`witnos` bin 隨 app 打包、hooks 與協議全用絕對路徑，使用者不必碰 PATH。）開發指令見 `CLAUDE.md`。
+**狀態：v1 實作進行中（2026-07-26 動工）。** 本檔記錄設計脈絡與待驗證假設。已落地：hooks 行為 spike（`spike/hooks-2026-07-26/`）、契約 schema（`docs/schema-v1.md`）、Rust workspace——`witnos-core`（型別／store／放行條件）、`witnos-server`（axum 核心，lib 形式、GUI 外殼內嵌）、headless bin `witnos`（雙 hook＋agent 子命令＋`pty-serve` 終端機 daemon）、Tauri 外殼與前端。未動工：主觀判斷 prompt hook。（`witnos init`、UserPromptSubmit 綁定＋協議注入 hook、`witnos goal new` 已落地；契約書寫規範由 UserPromptSubmit hook 每 session 注入一次，不寫進任何檔案。**2026-07-29 落地 auto 模式**：在 app 選一個專案目錄開「自動監看」後，**在 app 內建終端機裡啟動的** agent session，第一個 prompt 自動建立該 session 專屬的目標並上膛；在其他終端機裡啟動的 session 不在範圍內——不建目標、不注入協議、也不會被攔停（範圍記號 `WITNOS_TERMINAL`，app 開的每個 shell 都蓋上，agent 與它跑的 hook 都繼承得到）。marker 升級為 session-keyed 的 v2、`witnos` bin 隨 app 打包、hooks 與協議全用絕對路徑，使用者不必碰 PATH。）開發指令見 `CLAUDE.md`。
 
 ---
 
@@ -157,6 +157,12 @@
 - **主觀項的判斷 = Claude Code 自己的 prompt／agent hook**（裝在 `settings.json`），由 Claude Code 拿**使用者自己的憑證**去跑。v1 的 Witnos 行程內**完全不必接 LLM**——「Rust 沒有 Anthropic Agent SDK」因此不構成問題。Rust 核心只負責儲存 agent 的理解與證據，並主動標記重新詮釋（原則 6）。
 
 - **人的三個槓桿都會推進版本（2026-07-29）。** 改尺、退回、豁免各自都 bump `contract_version` 並蓋掉該項的 `last_edited_version`——這才是它們能傳到**還在跑**的 agent 的原因（PostToolUse 送信通道靠版本比對），而不是只在它想收工時才於閘門撞到。只改狀態而不 bump 的動作對送信通道是隱形的，那正是「退回了卻好像沒用」的原始成因。目標另外帶 `last_human_edit_version`，只由人的動作推進：agent 自己攤項目時也會 bump 版本，所以「版本動了」不能當成「人改了東西」用，否則每一輪正常執行都會對人叫（違反原則 4）。
+
+- **終端機活得比 app 久（2026-07-30，已端到端確認）。** goal 綁一個 session id，而那個 id 永不復生 —— 所以 GUI 一關就把 shell 掛斷，等於一份契約的壽命只有一次 app 執行：辛苦長出來的驗證項在下次開啟時對 agent 已經是死的。改由 `witnos pty-serve` 持有那些 shell，也就是 tmux 唯一承重的那個把戲，但不把 tmux 變成依賴（承重路徑維持單一語言、單一 repo，而那支 headless bin 本來就不准依賴 `tauri`）。協議的完整規格住在該模組的檔頭；形狀是**一個 socket、兩種連線**：控制連線走 newline-delimited JSON（open／list／resize／kill／**foreground**），資料連線一個 session 一條、hello 之後就是**不帶任何 framing 的裸位元流** —— agent 印幾 MB 的時候，不該為 base64 或每塊表頭付錢。attach 時先回放有界的 scrollback，再無縫接上即時輸出；那個接縫由結構保證，不是靠時序湊。session id 跨 daemon 重啟單調遞增且永不重用：id 就是 goal 用來指名「我的 agent 住在哪個終端機」的東西，重發一個還活著的 id 等於把修正打給錯的 agent。
+
+  三條必須守住的推論：**unmount＝detach，只有 ✕ 與 restart 才 kill**（React StrictMode 會 mount 兩次，而關掉 app 更不能殺 —— 那是整個功能）；**啟動時先做一次 census**，照原 id 還原存活的 pane，全都沒了才開新的；**「殭屍記帳」的前提因此反轉** —— 只記帳「記過 pane 但沒有任何一個還活著」的 goal，而且**問不出 census 時整個掃描跳過**（「我不知道」不能變成「它結束了」）。層次也守住：core 只收「還活著的清單」，去問 daemon 的是 app。
+
+  **已知代價**：app 關著的那段時間沒人在看。優雅退出會移除上膛標記（所以不會亂攔），但**強制結束**會留著它，於是撐過來的 agent 會在下一次 Stop 停在那裡等一個不存在的 core —— 持久化讓這個組合從邊角變成常態。自然的終點是把 axum core 也搬進 daemon、GUI 退化成純客戶端，也就是本文件上面自己寫的「本機 daemon + web 介面」那個參考架構；刻意延後，先讓骨架證明這條路可行。Windows 沒有 daemon（ConPTY 既讀不到前景行程群組、也沒有檔案系統 socket），那裡的終端機仍與 app 同生共死。
 
 - **把修正打回 agent 的終端機（2026-07-29）。** 對一個已經收工的 agent，事後裁判若無法回到執行流程就等於沒有發生——所以修正必須能開啟新的一回合。app 本來就擁有 agent 所在的那個終端機，於是走 PTY：每個 shell 都蓋上 `WITNOS_PANE`（與 `WITNOS_TERMINAL` 同一套繼承手法），UserPromptSubmit hook 把它記到 session 綁定上，IPC 命令由 goal → session → pane 找到那個 shell 並寫入一行。**安全守則是「pane 裡有沒有前景程式」**——與輸入 `cd` 的守則正好相反（那個需要有 shell 才能執行指令），把散文打進裸 shell 會被當指令跑掉。至於 agent 是閒置還是正在工作，**不是安全問題**（鍵盤輸入只會落在 Claude Code 的輸入框），只是禮貌：UI 讀 Claude Code 自己publish 的 OSC 標題（`·` 閒置、`✳` 工作中），工作中就不打字——因為送信通道本來就會在它下一次 tool call 帶到。
 

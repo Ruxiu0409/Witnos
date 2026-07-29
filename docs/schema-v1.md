@@ -16,7 +16,7 @@
 | `contract_version` | u64 | **單調遞增**。任何 item 的新增／修改（不論人或 agent）都 bump；證據不 bump（證據是對既有條目的填充，不是尺的變動） |
 | `agent_synced_version` | u64 | agent 最近一次 reconcile 完成時對齊到的版本 |
 | `last_human_edit_version` | u64 | **只有人的動作**（新增／改尺／退回／豁免）會推到當前版；agent 自己攤項目時不動。有它才分得出「人改了東西、agent 還沒看到」與「agent 自己剛攤完、還沒 reconcile」——後者是執行中的常態，UI 不該為它跳提示（原則 4） |
-| `sessions` | list | 綁定的 agent session（`{agent, session_id, bound_at, pane?}`；由 UserPromptSubmit hook 建立。`pane` = 該 session 活在 app 內建終端機的哪個 shell（`WITNOS_PANE`，hook 繼承環境變數而得），是「把修正打回代理」的收件地址） |
+| `sessions` | list | 綁定的 agent session（`{agent, session_id, bound_at, pane?}`；由 UserPromptSubmit hook 建立。`pane` = 該 session 活在 app 內建終端機的哪個 shell（`WITNOS_PANE`，hook 繼承環境變數而得），是「把修正打回代理」的收件地址。**2026-07-30 起這個 id 活得比 app 久**——shell 由終端機 daemon 持有，關掉 app 不會殺掉它，重開時原 id 的 pane 會被接回來） |
 | `items` | list\<Item\> | |
 | `evidence` | list\<Evidence\> | |
 | `events` | list\<Event\> | append-only |
@@ -120,6 +120,7 @@ block 的 reason **永遠是 delta**：缺哪幾條、哪幾條證據 stale、�
 | `~/.witnos/endpoint.json` | `{port, token}`，mode 0600 | core（啟動時） |
 | `~/.witnos/projects.json` | `{v, projects: [dir…]}`——哪些目錄開了 auto 模式（canonicalize 去重）。**人專屬面**：只走 app 的 IPC，永不上 HTTP——agent 不得替目錄開關監看 | core（app IPC 觸發） |
 | 專案 `.witnos/armed.json` | **marker v2**：`{v: 2, auto, default_goal?: {goal_id, contract_version, agent_synced_version}, sessions: {session_id: {…同左}}}`。整檔是 `(projects.json ∋ dir, store 內該 dir 的 goals)` 的**純推導**（只有 watching 的 goal 進得來；session 自己的 auto goal 佔自己的槽），tmp+rename 原子寫入——同目錄多 goal 不再互相蓋寫。**auto 專案零 goal 也保留 marker（照樣 fail closed）**。舊版單 goal 形狀仍可讀（正規化為 `default_goal`） | core：watch／每次 bump／每次 reconcile 重推導，優雅停止移除（`watching` 與 registry 留著，重啟時重新上膛） |
+| `~/.witnos/pty.sock` ／ `pty.lock` ／ `pty-ids.json` ／ `pty-serve.log` | **終端機 daemon（2026-07-30）**：socket（mode 0600，控制＋每 session 一條資料連線）、決定「誰在服務」的 advisory lock、**跨重啟單調遞增且永不重用**的 session id 配置器、daemon 的 stderr。id 的持久化寫入允許大聲失敗——發出一個活著的 pane 還在用的 id，等於把修正打給錯的 agent | `witnos pty-serve` |
 | 專案 `.witnos/delivered.json` | `{session_id: version}`（送信通道「上次注入到第幾版」） | `witnos hook post-tool-use` 自己寫（純本地，tmp+rename） |
 | 專案 `.witnos/instructed.json` | `{session_id: unix_ts}`（協議已注入過的 session） | `witnos hook user-prompt-submit` 自己寫（純本地，tmp+rename）。**auto 模式下建目標失敗不寫**——下個 prompt 重試，短暫斷線自癒 |
 
@@ -145,6 +146,12 @@ Stop 守門的 session 解析：`sessions[sid]` 有條目 → 以該 goal 問 co
 | `POST /goals/{id}/rulings`／`/drilldown` | 人退回（不再有核可欄位）、drill-down 記錄（UI 實際走 IPC；HTTP 面為完整性保留） |
 
 （goal 刪除、豁免、auto 專案註冊表、以及「把修正打回代理」**都不在** HTTP 面上——那些是人的動作，只走 app IPC。豁免尤其不能上 HTTP：agent 不得自己宣告某條不用檢查。）
+
+**終端機活得比 app 久（2026-07-30）**：goal 綁一個 session，而 session id 永不復生，所以 GUI 一關就把 shell 掛斷等於每次重開 app 都把契約作廢。`witnos pty-serve` 因此持有那些 shell（不是拿 tmux 當依賴——承重路徑維持單一語言單一 repo）。協議住在 `pty_serve.rs` 的模組頭；形狀是**一個 socket、兩種連線**：控制連線走 newline-delimited JSON（open／list／resize／kill／**foreground**），資料連線一個 session 一條、hello 之後就是**不帶任何 framing 的裸位元流**（agent 印幾 MB 時不該為 base64 或每塊表頭付錢）。attach 時先回放有界 scrollback 再接上即時輸出，接縫由結構保證、不靠時序。
+
+三個由此而生的規則：**unmount＝detach，只有 ✕ 與 restart 才 kill**（React StrictMode 會 mount 兩次，卸載即殺等於開一個 session 立刻毀掉它；關掉 app 更不能殺，那是整個功能）；**啟動時 app 先做一次 census**（`list`），照原 id 還原存活的 pane，一個都沒有才開新的；**「殭屍記帳」的前提因此反轉**——`account_ended_panes(surviving)` 只記帳「記過 pane 且沒有任何一個 pane 還活著」的 goal，而且**問不出 census 時整個掃描跳過**（「我不知道」不能變成「它結束了」）。層次守住：core 只收「還活著的清單」，去問 daemon 的是 app；headless core 沒有終端機層，不再做這個掃描。
+
+已知代價：**app 關著的那段時間 agent 是沒人看的**（優雅退出會移除 armed marker，所以不會亂攔；但強制結束會留著 marker，agent 撞到 Stop 就停在那裡等一個不存在的 core——持久化讓這個組合從邊角變常態）。自然的終點是把 axum core 也搬進 daemon、GUI 退化成純客戶端，也就是 README 自己寫的「本機 daemon + UI」參考架構；刻意延後。Windows 沒有 daemon（ConPTY 既讀不到前景行程群組、也沒有檔案系統 socket），終端機仍在 app 行程內、仍與它同生共死。
 
 **把修正打回代理（2026-07-29）**：人改完尺之後，修正要能真的變成一次新回合，否則「事後裁決」對已收工的 agent 等於無效。app 自己擁有 agent 所在的終端機，所以走 PTY：`send_to_agent(goal_id, note)`（IPC）以 `sessions[].pane` 找到那個 shell，寫入一行（`\x15` 清掉半打的字，`\r` 即 Enter），回 `sent` ／ `no_agent`（那個 pane 停在裸 shell——沒有東西可下 prompt，且散文會被當指令執行，故拒寫）／ `unbound`（沒有 session、沒有 pane、或 pane 已不存在）。**安全守則是「pane 裡有沒有前景程式」**（`cd` 的守則正好相反，要有 shell 才能跑指令，兩者不可共用）；**「它是閒置還是在工作」不是安全問題**（鍵入 Claude Code 只會落在它的輸入框），只是禮貌，由 UI 依 Claude Code 自己publish 的 OSC 標題（`·` 閒置／`✳` 工作中）判斷——工作中就不打字，因為送信通道本來就會在它下一次 tool call 帶到。
 
