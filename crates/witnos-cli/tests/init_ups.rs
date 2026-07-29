@@ -207,6 +207,13 @@ fn ups_injects_protocol_once_and_binds_session() {
         out.contains("empty contract never releases"),
         "protocol must name the empty-contract block reason: {out}"
     );
+    // The protocol itself is English, and without a rule an agent answering a
+    // non-English goal writes its claims and evidence in English too — which
+    // the human then can't read, so nothing gets triggered (principle 1).
+    assert!(
+        out.contains("in the language the user writes to you in"),
+        "protocol must pin the contract's language to the user's: {out}"
+    );
 
     let g: Value = ureq::get(&format!("{base}/goals/{gid}"))
         .set("Authorization", &auth)

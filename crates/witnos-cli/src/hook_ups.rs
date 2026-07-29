@@ -270,6 +270,13 @@ fn title_from_prompt(prompt: Option<&str>, session: &str) -> String {
 /// it rides along with every later turn of the conversation. Every command
 /// carries the bin's absolute path (no PATH assumption) and the goal id
 /// (goal identity travels in-context, never ambiently).
+///
+/// The language rule is not cosmetic: this whole prompt is English, so an agent
+/// answering a Traditional Chinese goal still wrote its claims and evidence in
+/// English — and evidence the human can't read triggers nothing, which is the
+/// entire mechanism (principle 1). The rule keys off the user's own prompts
+/// rather than the app's UI language: the hook can't see the webview's setting,
+/// and the words the user is typing at the agent are the better signal anyway.
 fn protocol_text(
     goal_line: &str,
     goal_id: &str,
@@ -294,6 +301,11 @@ fn protocol_text(
          verification contract that the user can edit WHILE you work. Protocol (all via the `witnos` CLI in Bash; \
          if `witnos` is not on PATH call it as \"{bin}\"; your goal id is {goal_id} — pass `--goal {goal_id}` \
          to every command):\n\
+         Language: everything you write into the contract is read BY THE USER in the app, so write every claim, \
+         check, interpretation and evidence conclusion in the language the user writes to you in (their own \
+         prompts are the reference). Do not switch to English because this tooling is in English — a contract \
+         the user can't read hides exactly what it exists to surface. Command names, paths, code and command \
+         output stay verbatim.\n\
          1. Before implementing, lay out what you will verify: `witnos item lay --goal {goal_id}` with a JSON array on stdin; \
          each item = {{\"claim\": what must hold, \"check\": how you verify it}}. Items are SUBJECTIVE by default; \
          add \"class\":{{\"kind\":\"objective\",\"oracle\":{{\"command\":\"…\",\"expected\":\"…\"}},\"promoted_by\":\"agent\"}} \
