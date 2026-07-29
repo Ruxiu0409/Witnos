@@ -200,6 +200,13 @@ fn ups_injects_protocol_once_and_binds_session() {
     assert!(out.contains("witnos item lay"), "got: {out}");
     assert!(out.contains("blindspot"), "got: {out}");
     assert!(out.contains("ups demo"), "should carry the goal title: {out}");
+    // The gate blocks an empty contract before it checks anything else, so the
+    // protocol has to say so — an agent that only learns it from a block has
+    // already been stalled once for a preventable reason.
+    assert!(
+        out.contains("empty contract never releases"),
+        "protocol must name the empty-contract block reason: {out}"
+    );
 
     let g: Value = ureq::get(&format!("{base}/goals/{gid}"))
         .set("Authorization", &auth)

@@ -309,8 +309,10 @@ fn protocol_text(
          `witnos reconcile --goal {goal_id} --to <version>`. A delta may say an item was SENT BACK (the user judged \
          your evidence didn't answer it): fix it your way, then attach new evidence. An item marked WAIVED needs \
          nothing from you.\n\
-         7. Stopping is gated: you are released only when objective items passed, every subjective item carries \
-         interpretation + evidence, and you've reconciled to the latest contract version. Nobody signs off on your \
+         7. Stopping is gated: you are released only when the contract holds at least one item, objective items \
+         passed, every subjective item carries interpretation + evidence, and you've reconciled to the latest \
+         contract version. An empty contract never releases — lay items even on a turn that changes no code. \
+         Nobody signs off on your \
          subjective items — lay out your interpretation and the evidence you judged by, then move on. Never wait for \
          the user; if they disagree they edit the contract or send the item back, and you'll see it in a delta."
     )
