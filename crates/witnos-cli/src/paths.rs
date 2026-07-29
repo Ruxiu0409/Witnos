@@ -56,6 +56,18 @@ pub fn write_atomic(path: &Path, content: &str) {
     }
 }
 
+/// Is this agent session running inside Witnos's own embedded terminal?
+///
+/// The app stamps `WITNOS_TERMINAL` on every shell it spawns; the agent
+/// launched there inherits it, and so does every hook process the agent runs
+/// (verified on Claude Code 2.1.220). A session without it was started
+/// somewhere else — another terminal app, a CI runner — and Witnos leaves it
+/// alone: no goal is created for it and it is never stalled. Exporting the
+/// variable by hand is therefore a deliberate opt-in, not a leak.
+pub fn in_witnos_terminal() -> bool {
+    std::env::var("WITNOS_TERMINAL").is_ok_and(|v| !v.trim().is_empty())
+}
+
 pub fn read_endpoint() -> Result<Endpoint, String> {
     let p = witnos_home().join("endpoint.json");
     let s = std::fs::read_to_string(&p).map_err(|e| format!("cannot read {}: {e}", p.display()))?;

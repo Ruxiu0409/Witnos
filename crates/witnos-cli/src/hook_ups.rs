@@ -61,6 +61,12 @@ fn try_run() -> Option<()> {
 
     let injection = match marker.resolve(Some(&session)) {
         Resolution::Entry(entry) => existing_goal(&entry.goal_id, entry.contract_version, &session),
+        // Auto mode covers Witnos's own terminal only: a session the user
+        // started in some other terminal gets no goal and no protocol, so
+        // nothing about their work shows up in the app uninvited. No
+        // instructed mark either — if they later relaunch inside Witnos, the
+        // first prompt there still binds.
+        Resolution::NoGoalAuto if !paths::in_witnos_terminal() => return Some(()),
         Resolution::NoGoalAuto => auto_create_goal(&root, &session, input.prompt.as_deref())?,
         Resolution::NoGoalManual => return Some(()),
     };

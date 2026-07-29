@@ -72,6 +72,10 @@ fn run_bin(
         .args(args)
         .current_dir(project)
         .env("WITNOS_HOME", home)
+        // The loop under test is an agent running in Witnos's own terminal,
+        // which is the only kind auto mode covers. Set explicitly rather than
+        // inherited, so the suite means the same thing wherever it runs.
+        .env("WITNOS_TERMINAL", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

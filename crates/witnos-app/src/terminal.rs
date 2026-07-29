@@ -71,6 +71,10 @@ pub fn term_spawn(
         cmd.arg("-l");
     }
     cmd.env("TERM", "xterm-256color");
+    // The scope stamp: agents started in this shell inherit it, and so do the
+    // hook processes they run, which is how the hooks tell "launched from
+    // Witnos" (gets a goal, gets gated) from any other terminal (left alone).
+    cmd.env("WITNOS_TERMINAL", "1");
     // Make the bundled `witnos` CLI reachable by name for the human and for
     // agents launched from this shell (agent-facing instructions carry the
     // absolute path anyway — this is convenience, not a load-bearing link).

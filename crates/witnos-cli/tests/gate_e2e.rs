@@ -41,16 +41,38 @@ fn write_endpoint(home: &Path, port: u16) {
     .unwrap();
 }
 
+/// A session started in some other terminal (no Witnos scope stamp).
 fn run_hook(sub: &str, project: &Path, home: &Path, stdin_json: &str) -> String {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_witnos"))
-        .args(["hook", sub])
+    hook(sub, project, home, stdin_json, false)
+}
+
+/// A session started from Witnos's own embedded terminal.
+fn run_hook_from_witnos(sub: &str, project: &Path, home: &Path, stdin_json: &str) -> String {
+    hook(sub, project, home, stdin_json, true)
+}
+
+fn hook(
+    sub: &str,
+    project: &Path,
+    home: &Path,
+    stdin_json: &str,
+    from_witnos: bool,
+) -> String {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_witnos"));
+    cmd.args(["hook", sub])
         .current_dir(project)
         .env("WITNOS_HOME", home)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+        .stderr(Stdio::piped());
+    // Set or cleared explicitly, never inherited: the suite must mean the same
+    // thing whether it runs inside Witnos's terminal or anywhere else.
+    if from_witnos {
+        cmd.env("WITNOS_TERMINAL", "1");
+    } else {
+        cmd.env_remove("WITNOS_TERMINAL");
+    }
+    let mut child = cmd.spawn().unwrap();
     child
         .stdin
         .take()
@@ -324,7 +346,7 @@ fn stop_unbound_session_in_auto_asks_core_with_project_dir() {
         r#"{"decision":"block","reason":"no goal for this session"}"#,
     );
     write_endpoint(&home, port);
-    let out = run_hook("stop", &project, &home, &stdin_json(&project));
+    let out = run_hook_from_witnos("stop", &project, &home, &stdin_json(&project));
     assert!(out.contains("no goal for this session"), "got: {out}");
     let req = rx.recv_timeout(Duration::from_secs(3)).unwrap();
     assert!(req.contains("project_dir"), "resolution key must travel: {req}");
@@ -337,7 +359,7 @@ fn stop_auto_marker_blocks_when_core_unreachable() {
     let home = temp_dir("v2-dead-home");
     write_raw_marker(&project, r#"{"v":2,"auto":true}"#);
     write_endpoint(&home, dead_port());
-    let out = run_hook("stop", &project, &home, &stdin_json(&project));
+    let out = run_hook_from_witnos("stop", &project, &home, &stdin_json(&project));
     assert!(out.contains(r#""decision":"block""#), "got: {out}");
     assert!(out.contains("witnos disarm"), "escape hatch must be documented: {out}");
 }
@@ -347,9 +369,44 @@ fn stop_garbage_marker_content_still_blocks() {
     let project = temp_dir("v2-garbage");
     let home = temp_dir("v2-garbage-home");
     write_raw_marker(&project, "{{{ not json");
-    let out = run_hook("stop", &project, &home, &stdin_json(&project));
+    let out = run_hook_from_witnos("stop", &project, &home, &stdin_json(&project));
     assert!(out.contains(r#""decision":"block""#), "torn marker must stall: {out}");
     assert!(out.contains("witnos disarm"), "got: {out}");
+}
+
+/// A session with no goal of its own, started outside Witnos's terminal, is
+/// never stalled — not by a dead core, not by a torn marker. Stalling it could
+/// not protect any contract, and it would land in whatever terminal the user
+/// is actually working in.
+#[test]
+fn stop_unbound_outside_witnos_terminal_releases() {
+    let project = temp_dir("v2-outside");
+    let home = temp_dir("v2-outside-home");
+    write_raw_marker(&project, r#"{"v":2,"auto":true}"#);
+    write_endpoint(&home, dead_port());
+    let out = run_hook("stop", &project, &home, &stdin_json(&project));
+    assert_eq!(out.trim(), "", "out-of-scope session must not be stalled: {out}");
+
+    write_raw_marker(&project, "{{{ not json");
+    let out = run_hook("stop", &project, &home, &stdin_json(&project));
+    assert_eq!(out.trim(), "", "not even a torn marker may stall it: {out}");
+}
+
+/// The flip side: owning a goal is what gets you gated. A session bound in the
+/// marker is evaluated exactly as before even though it was started elsewhere —
+/// silently dropping enforcement on a contract the human is editing would be
+/// the worse failure.
+#[test]
+fn stop_bound_session_is_gated_even_outside_witnos_terminal() {
+    let project = temp_dir("v2-bound-out");
+    let home = temp_dir("v2-bound-out-home");
+    write_raw_marker(
+        &project,
+        r#"{"v":2,"auto":true,"sessions":{"s1":{"goal_id":"g-mine","contract_version":4}}}"#,
+    );
+    write_endpoint(&home, dead_port());
+    let out = run_hook("stop", &project, &home, &stdin_json(&project));
+    assert!(out.contains(r#""decision":"block""#), "bound session keeps its gate: {out}");
 }
 
 #[test]

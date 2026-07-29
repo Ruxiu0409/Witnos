@@ -26,15 +26,32 @@ fn run_bin(
     home: &Path,
     stdin: Option<&str>,
 ) -> (String, String, bool) {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_witnos"))
-        .args(args)
+    run_bin_scoped(args, project, home, stdin, true)
+}
+
+/// `from_witnos` = pretend the session was launched from Witnos's own embedded
+/// terminal (the scope stamp the app sets). Always set or cleared explicitly,
+/// never inherited, so the suite means the same thing wherever it is run.
+fn run_bin_scoped(
+    args: &[&str],
+    project: &Path,
+    home: &Path,
+    stdin: Option<&str>,
+    from_witnos: bool,
+) -> (String, String, bool) {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_witnos"));
+    cmd.args(args)
         .current_dir(project)
         .env("WITNOS_HOME", home)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+        .stderr(Stdio::piped());
+    if from_witnos {
+        cmd.env("WITNOS_TERMINAL", "1");
+    } else {
+        cmd.env_remove("WITNOS_TERMINAL");
+    }
+    let mut child = cmd.spawn().unwrap();
     child
         .stdin
         .take()
@@ -279,11 +296,28 @@ fn goals_list(core: &AutoCore) -> Vec<Value> {
 }
 
 fn ups(project: &Path, home: &Path, session: &str, prompt: &str) -> String {
+    ups_scoped(project, home, session, prompt, true)
+}
+
+fn ups_scoped(
+    project: &Path,
+    home: &Path,
+    session: &str,
+    prompt: &str,
+    from_witnos: bool,
+) -> String {
     let stdin = format!(
         r#"{{"session_id":"{session}","cwd":"{}","prompt":"{prompt}"}}"#,
         project.display()
     );
-    run_bin(&["hook", "user-prompt-submit"], project, home, Some(&stdin)).0
+    run_bin_scoped(
+        &["hook", "user-prompt-submit"],
+        project,
+        home,
+        Some(&stdin),
+        from_witnos,
+    )
+    .0
 }
 
 #[test]
@@ -316,6 +350,30 @@ fn ups_auto_creates_one_goal_per_session_from_the_prompt() {
     let out = ups(&project, &home, "s-two", "Refactor payments");
     assert!(out.contains("Refactor payments"), "got: {out}");
     assert_eq!(goals_list(&core).len(), 2);
+}
+
+/// Auto mode covers Witnos's own terminal only. A session the user started in
+/// some other terminal gets no goal, no protocol injection, and leaves no
+/// instructed mark — so relaunching inside Witnos still binds on its first
+/// prompt.
+#[test]
+fn ups_creates_no_goal_outside_the_witnos_terminal() {
+    let project = temp_dir("aups-outside");
+    let home = temp_dir("aups-outside-home");
+    let core = start_auto_core(&home, &project);
+
+    let out = ups_scoped(&project, &home, "s-elsewhere", "Fix the login bug", false);
+    assert_eq!(out.trim(), "", "no injection for an out-of-scope session: {out}");
+    assert!(goals_list(&core).is_empty(), "no goal may be created: {:?}", goals_list(&core));
+    assert!(
+        !project.join(".witnos/instructed.json").exists(),
+        "an out-of-scope prompt must not mark the session instructed"
+    );
+
+    // Same session, now from Witnos's terminal: it binds normally.
+    let out = ups_scoped(&project, &home, "s-elsewhere", "Fix the login bug", true);
+    assert!(out.contains("auto-created"), "got: {out}");
+    assert_eq!(goals_list(&core).len(), 1);
 }
 
 #[test]

@@ -3,6 +3,12 @@
 //! non-2xx, malformed response, even a panic in this binary) it prints
 //! `{"decision":"block", ...}`. With no armed marker it allows — that
 //! project simply isn't being watched.
+//!
+//! One session-level narrowing: a session is gated when it HAS a goal. When
+//! it has none, only sessions launched from Witnos's own terminal get the
+//! fail-closed stall — everything else is out of scope and released. Stalling
+//! a session that owns no contract protects nothing; it is pure collateral
+//! damage on whatever terminal the user happens to be working in.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -54,9 +60,17 @@ pub fn run() -> ExitCode {
     };
     ARMED.store(true, Ordering::SeqCst);
 
+    // Out-of-scope sessions own no goal, so no branch below can protect
+    // anything by stalling them. Sessions WITH a goal are gated regardless of
+    // where they were started (see the module note).
+    let in_scope = paths::in_witnos_terminal();
+
     // The marker's presence arms the gate even if its content is unreadable
     // (a torn write during an app crash must still stall, not slip through).
     let Some(marker) = paths::read_marker(&marker_path) else {
+        if !in_scope {
+            return ExitCode::SUCCESS; // can't be this session's goal — nothing to hold
+        }
         println!(
             "{}",
             block_json(
@@ -78,15 +92,25 @@ pub fn run() -> ExitCode {
         }),
         // Auto project, unbound session: only the core can tell apart
         // "goal exists but the marker is stale" / "human opted this goal
-        // out" / "genuinely never bound" — ask it; on error, block.
-        Resolution::NoGoalAuto => json!({
-            "project_dir": root.to_string_lossy(),
-            "session_id": input.session_id,
-            "stop_hook_active": input.stop_hook_active,
-        }),
+        // out" / "genuinely never bound" — ask it; on error, block. But a
+        // session from another terminal never had a goal here to begin with,
+        // so it is released without even asking.
+        Resolution::NoGoalAuto => {
+            if !in_scope {
+                return ExitCode::SUCCESS;
+            }
+            json!({
+                "project_dir": root.to_string_lossy(),
+                "session_id": input.session_id,
+                "stop_hook_active": input.stop_hook_active,
+            })
+        }
         // A manual marker that names no goal only exists hand-damaged;
-        // presence arms, so block.
+        // presence arms, so block — unless this session is out of scope.
         Resolution::NoGoalManual => {
+            if !in_scope {
+                return ExitCode::SUCCESS;
+            }
             println!(
                 "{}",
                 block_json(
