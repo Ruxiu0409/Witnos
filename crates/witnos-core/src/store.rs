@@ -7,6 +7,8 @@
 //! - an agent cannot claim a human promoted an item
 //! - evidence must carry provenance
 //! - agents must not edit human-authored claims (interpret instead)
+//! - every human move on the yardstick — an edit, sending an item back, waiving
+//!   it — bumps the version, so all of them travel the same live delta
 
 use std::collections::HashMap;
 use std::fmt;
@@ -88,8 +90,7 @@ impl Store {
         for entry in fs::read_dir(&dir)? {
             let path = entry?.path();
             if path.extension().is_some_and(|e| e == "json") {
-                let mut goal: Goal = serde_json::from_str(&fs::read_to_string(&path)?)?;
-                normalize_parked_status(&mut goal);
+                let goal: Goal = serde_json::from_str(&fs::read_to_string(&path)?)?;
                 goals.insert(goal.id.clone(), goal);
             }
         }
@@ -114,6 +115,7 @@ impl Store {
             status: GoalStatus::Running,
             contract_version: 0,
             agent_synced_version: 0,
+            last_human_edit_version: 0,
             sessions: Vec::new(),
             items: Vec::new(),
             evidence: Vec::new(),
@@ -140,6 +142,7 @@ impl Store {
         project_dir: &str,
         session_id: &str,
         agent: &str,
+        pane: Option<u32>,
     ) -> Result<(Goal, bool), StoreError> {
         let mut map = self.write();
         if let Some(existing) = map.values().find(|g| {
@@ -154,10 +157,12 @@ impl Store {
             status: GoalStatus::Running,
             contract_version: 0,
             agent_synced_version: 0,
+            last_human_edit_version: 0,
             sessions: vec![SessionBinding {
                 agent: agent.to_string(),
                 session_id: session_id.to_string(),
                 bound_at: now(),
+                pane,
             }],
             items: Vec::new(),
             evidence: Vec::new(),
@@ -196,14 +201,29 @@ impl Store {
             .cloned()
     }
 
-    pub fn bind_session(&self, goal_id: &str, agent: &str, session_id: &str) -> Result<(), StoreError> {
+    /// Bind an agent session to a goal. `pane` is where that session's shell
+    /// lives when Witnos spawned it; a later bind that doesn't know the pane
+    /// (the gate route, say) must not erase one we already learned.
+    pub fn bind_session(
+        &self,
+        goal_id: &str,
+        agent: &str,
+        session_id: &str,
+        pane: Option<u32>,
+    ) -> Result<(), StoreError> {
         self.mutate(goal_id, |goal| {
-            if !goal.sessions.iter().any(|s| s.session_id == session_id) {
-                goal.sessions.push(SessionBinding {
+            match goal.sessions.iter_mut().find(|s| s.session_id == session_id) {
+                Some(existing) => {
+                    if pane.is_some() {
+                        existing.pane = pane;
+                    }
+                }
+                None => goal.sessions.push(SessionBinding {
                     agent: agent.to_string(),
                     session_id: session_id.to_string(),
                     bound_at: now(),
-                });
+                    pane,
+                }),
             }
             Ok(())
         })
@@ -231,6 +251,11 @@ impl Store {
                 }
                 goal.contract_version += 1;
                 let v = goal.contract_version;
+                // Only the human's own adds move this: it is what the UI reads
+                // to know there is something of theirs the agent hasn't seen.
+                if actor == Actor::Human {
+                    goal.last_human_edit_version = v;
+                }
                 let id = new_id();
                 let history = new
                     .interpretation
@@ -303,6 +328,11 @@ impl Store {
             item.status = ItemStatus::Open;
             item.last_edited_version = v;
             let id = item.id.clone();
+            // An agent editing its own item is ordinary mid-run work, not news
+            // for the agent — only the human's edits count as news.
+            if actor == Actor::Human {
+                goal.last_human_edit_version = v;
+            }
             goal.events.push(Event {
                 at: now(),
                 kind: EventKind::ContractEdited {
@@ -355,7 +385,8 @@ impl Store {
             item.evidence_ids.push(id.clone());
             // Laying evidence moves an open/rejected subjective item to Laid,
             // provided an interpretation exists. Objective items pass only
-            // via report_oracle.
+            // via report_oracle; a waived item stays waived — only the human
+            // puts it back in scope.
             if matches!(item.class, Class::Subjective)
                 && matches!(item.status, ItemStatus::Open | ItemStatus::Rejected)
                 && item.interpretation.is_some()
@@ -395,7 +426,9 @@ impl Store {
             let item = find_item(&mut goal.items, item_id)?;
             if !matches!(item.class, Class::Objective { .. }) {
                 return Err(StoreError::Invalid(
-                    "oracle results apply only to objective items; subjective items pass only on a human ruling".into(),
+                    "oracle results apply only to objective items; a subjective item is done when \
+                     you have laid out your interpretation and the evidence you judged by"
+                        .into(),
                 ));
             }
             item.status = if passed {
@@ -407,34 +440,44 @@ impl Store {
         })
     }
 
-    /// Human ruling on a subjective item. Never callable by the agent — the
-    /// server must route agent identities away from this operation.
-    pub fn rule_item(
+    /// The human sends a subjective item back. Never callable by the agent —
+    /// the server must route agent identities away from this operation.
+    ///
+    /// There is no counterpart approval: the agent's work is presumed correct,
+    /// so a rejection is a move on the yardstick, not a verdict beside it. It
+    /// therefore bumps the contract version and stamps the item exactly like an
+    /// edit — which is what puts it into the delta the delivery channel
+    /// computes, reaching an agent that is still RUNNING instead of waiting at
+    /// the gate for it to try to stop.
+    pub fn reject_item(
         &self,
         goal_id: &str,
         item_id: &str,
-        approve: bool,
         after_drill_down: bool,
     ) -> Result<(), StoreError> {
         self.mutate(goal_id, |goal| {
+            // Bumped before validation on purpose: `mutate` works on a draft,
+            // so a rejected call discards the bump with everything else.
+            goal.contract_version += 1;
+            let v = goal.contract_version;
             let item = find_item(&mut goal.items, item_id)?;
             if !matches!(item.class, Class::Subjective) {
                 return Err(StoreError::Invalid(
                     "rulings apply only to subjective items".into(),
                 ));
             }
-            if !matches!(item.status, ItemStatus::Laid | ItemStatus::Approved | ItemStatus::Rejected) {
+            if !matches!(item.status, ItemStatus::Laid | ItemStatus::Rejected) {
                 return Err(StoreError::Invalid(
                     "item has nothing laid out to rule on yet".into(),
                 ));
             }
-            item.status = if approve {
-                ItemStatus::Approved
-            } else {
-                ItemStatus::Rejected
-            };
+            item.status = ItemStatus::Rejected;
+            // Freshness follows the same rule as an edit: evidence captured
+            // before the rejection no longer answers it.
+            item.last_edited_version = v;
             let verdict = item.status;
             let id = item.id.clone();
+            goal.last_human_edit_version = v;
             goal.events.push(Event {
                 at: now(),
                 kind: EventKind::Ruling {
@@ -442,6 +485,57 @@ impl Store {
                     verdict,
                     after_drill_down,
                 },
+            });
+            Ok(())
+        })
+    }
+
+    /// Per-item opt-out — `unwatch` narrowed to one item. Human-only, same as
+    /// rulings: an agent must never be able to excuse itself from a check.
+    ///
+    /// Bumps the contract version and stamps the item in BOTH directions, the
+    /// same way an edit or a rejection does. Waiving takes work away, but that
+    /// is exactly why the agent has to hear it while it is still RUNNING: left
+    /// to the gate, it would spend the rest of the turn producing evidence for
+    /// something nobody will ever read. The bump is what puts the item in the
+    /// delta the delivery channel computes, and `delta_note` is what tells the
+    /// agent which side of the toggle it landed on.
+    ///
+    /// The cost is honest and small: the gate will hold the agent for one round
+    /// asking it to reconcile to the new version. Un-waiving needs that round
+    /// anyway — the item is back in scope and wants fresh evidence.
+    pub fn waive_item(
+        &self,
+        goal_id: &str,
+        item_id: &str,
+        waived: bool,
+    ) -> Result<(), StoreError> {
+        self.mutate(goal_id, |goal| {
+            // Read the current side of the toggle before touching anything: a
+            // no-op must leave the version alone, and `mutate` persists any
+            // draft that returns Ok — including one that only bumped.
+            let already = find_item(&mut goal.items, item_id)?.status == ItemStatus::Waived;
+            // Already there: a double-clicked toggle is not an error — and
+            // this guard is what keeps un-waive from resetting a laid item.
+            if already == waived {
+                return Ok(());
+            }
+            goal.contract_version += 1;
+            let v = goal.contract_version;
+            let item = find_item(&mut goal.items, item_id)?;
+            item.status = if waived {
+                ItemStatus::Waived
+            } else {
+                ItemStatus::Open
+            };
+            // Same freshness rule as an edit: on the way back in, evidence from
+            // before the waiver does not answer the item any more.
+            item.last_edited_version = v;
+            let id = item.id.clone();
+            goal.last_human_edit_version = v;
+            goal.events.push(Event {
+                at: now(),
+                kind: EventKind::Waiver { item_id: id, waived },
             });
             Ok(())
         })
@@ -616,32 +710,9 @@ impl Store {
             .ok_or_else(|| StoreError::GoalNotFound(goal_id.to_string()))?;
         let mut draft = goal.clone();
         let out = f(&mut draft)?;
-        normalize_parked_status(&mut draft);
         persist(&self.dir, &draft)?;
         *goal = draft;
         Ok(out)
-    }
-}
-
-/// While a goal is parked after release, `AwaitingRulings` vs `Ruled` is a
-/// pure derivation of item statuses — any subjective item still `Laid` keeps
-/// the goal awaiting. Recomputed on every mutation (a ruling can settle it;
-/// fresh evidence on a rejected item re-opens it) and on load, so goals
-/// stored before the split heal on open.
-fn normalize_parked_status(goal: &mut Goal) {
-    if matches!(
-        goal.status,
-        GoalStatus::AwaitingRulings | GoalStatus::Ruled
-    ) {
-        let awaiting = goal
-            .items
-            .iter()
-            .any(|i| matches!(i.class, Class::Subjective) && i.status == ItemStatus::Laid);
-        goal.status = if awaiting {
-            GoalStatus::AwaitingRulings
-        } else {
-            GoalStatus::Ruled
-        };
     }
 }
 

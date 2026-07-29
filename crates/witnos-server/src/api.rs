@@ -13,8 +13,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use witnos_core::{
-    evaluate, Actor, Class, EventKind, GateDecisionKind, Goal, Item, NewEvidence, NewItem,
-    Pointer, StoreError, Version,
+    evaluate, Actor, Class, EventKind, GateDecisionKind, Goal, Item, ItemStatus, NewEvidence,
+    NewItem, Pointer, StoreError, Version,
 };
 
 use crate::{resync_dir, resync_goal_dir, AppState};
@@ -86,7 +86,9 @@ pub async fn gate(State(state): State<Arc<AppState>>, Json(req): Json<GateReq>) 
         }
     };
     if let Some(sid) = &req.session_id {
-        let _ = state.store.bind_session(&goal.id, "claude-code", sid);
+        // No pane here: the Stop hook's env is the agent's, but the binding
+        // hook already recorded it — `None` never erases what we know.
+        let _ = state.store.bind_session(&goal.id, "claude-code", sid, None);
     }
     let outcome = evaluate(&goal);
     if outcome.release {
@@ -186,6 +188,10 @@ pub struct AutoGoalReq {
     pub session_id: String,
     #[serde(default = "default_auto_agent")]
     pub agent: String,
+    /// The Witnos terminal pane this session's shell runs in — how the human
+    /// later gets a correction typed back into the right terminal.
+    #[serde(default)]
+    pub pane: Option<u32>,
 }
 
 fn default_auto_agent() -> String {
@@ -199,10 +205,13 @@ pub async fn create_auto_goal(
     State(state): State<Arc<AppState>>,
     Json(req): Json<AutoGoalReq>,
 ) -> Response {
-    match state
-        .store
-        .create_auto_goal(&req.title, &req.project_dir, &req.session_id, &req.agent)
-    {
+    match state.store.create_auto_goal(
+        &req.title,
+        &req.project_dir,
+        &req.session_id,
+        &req.agent,
+        req.pane,
+    ) {
         Ok((goal, created)) => {
             resync_dir(&state, &req.project_dir);
             Json(json!({
@@ -289,6 +298,10 @@ pub struct BindReq {
     pub session_id: String,
     #[serde(default = "default_agent")]
     pub agent: String,
+    /// Which Witnos terminal pane the session runs in, when the hook could
+    /// tell (absent for sessions started anywhere else).
+    #[serde(default)]
+    pub pane: Option<u32>,
 }
 
 fn default_agent() -> String {
@@ -300,7 +313,10 @@ pub async fn bind_session(
     Path(id): Path<String>,
     Json(req): Json<BindReq>,
 ) -> Response {
-    match state.store.bind_session(&id, &req.agent, &req.session_id) {
+    match state
+        .store
+        .bind_session(&id, &req.agent, &req.session_id, req.pane)
+    {
         Ok(()) => Json(json!({"ok": true})).into_response(),
         Err(e) => err(e),
     }
@@ -357,15 +373,33 @@ fn render_delta(goal: &Goal, since: Version) -> String {
         .iter()
         .map(|i| {
             format!(
-                "- [{}] \"{}\" — check: {} (id: {})",
+                "- [{}] \"{}\" — check: {} (id: {}){}",
                 class_word(&i.class),
                 i.claim,
                 i.check,
-                i.id
+                i.id,
+                delta_note(i),
             )
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Why an item is in the delta, when the claim text alone wouldn't say. A
+/// rejection and a waiver both reach the agent through this channel, so they
+/// have to read as "sent back" and "stop working on this" rather than as fresh
+/// edits — the required action is the opposite in each case.
+///
+/// An UN-waived item needs no note: it comes back as `Open`, and "changed,
+/// address it" is exactly the right reading — the same one an edit gets, and the
+/// same work.
+fn delta_note(item: &Item) -> &'static str {
+    match item.status {
+        ItemStatus::Rejected => "  ← SENT BACK by the human: your evidence didn't answer it; \
+                                 re-address and attach new evidence",
+        ItemStatus::Waived => "  ← WAIVED by the human: nothing needed from you",
+        _ => "",
+    }
 }
 
 // ---------- items / evidence / rulings ----------
@@ -508,24 +542,33 @@ pub async fn reconcile(
 #[derive(Deserialize)]
 pub struct RuleReq {
     pub item_id: String,
-    pub approve: bool,
     #[serde(default)]
     pub after_drill_down: bool,
 }
 
-/// Human-only by contract. The HTTP layer cannot distinguish callers yet
-/// (one shared local token); the agent-facing CLI simply does not expose
-/// this. Proper separation lands when the UI moves in-process (Tauri).
-pub async fn rule(
+/// Send an item back — the only ruling there is (the agent's work is presumed
+/// correct otherwise). Human-only by contract: the HTTP layer cannot
+/// distinguish callers yet (one shared local token); the agent-facing CLI
+/// simply does not expose this. Proper separation lands when the UI moves
+/// in-process (Tauri).
+pub async fn reject(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Json(req): Json<RuleReq>,
 ) -> Response {
     match state
         .store
-        .rule_item(&id, &req.item_id, req.approve, req.after_drill_down)
+        .reject_item(&id, &req.item_id, req.after_drill_down)
     {
-        Ok(()) => Json(json!({"ok": true})).into_response(),
+        // A rejection bumps the contract version, so the marker has to mirror
+        // it or the delivery channel's local check would miss the delta.
+        Ok(()) => match state.store.get_goal(&id) {
+            Some(goal) => {
+                resync_goal_dir(&state, &goal);
+                Json(json!({"version": goal.contract_version})).into_response()
+            }
+            None => err(StoreError::GoalNotFound(id)),
+        },
         Err(e) => err(e),
     }
 }

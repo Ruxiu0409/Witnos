@@ -1,8 +1,8 @@
 //! The Witnos GUI core: a Tauri shell that spawns the axum server on startup
 //! and exposes the HUMAN side of the store over IPC. The trust split is
 //! structural: the webview (human) uses these in-process commands — including
-//! `rule_item`, which the HTTP surface will never let an agent reach cleanly —
-//! while agents go through the `witnos` CLI over HTTP.
+//! `reject_item` and `waive_item`, which the HTTP surface will never let an
+//! agent reach cleanly — while agents go through the `witnos` CLI over HTTP.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -153,20 +153,104 @@ fn edit_item(
     Ok(json!({"ok": true}))
 }
 
+/// Send an item back. There is no approve counterpart: the agent's work is
+/// presumed correct, and this bumps the contract version like an edit does, so
+/// the rejection reaches a still-running agent through the delivery channel.
+/// `after_drill_down` records whether the human opened the evidence original
+/// first — the anti-rubber-stamping signal (principle 6).
 #[tauri::command]
-fn rule_item(
+fn reject_item(
     state: State<'_, App>,
     goal_id: String,
     item_id: String,
-    approve: bool,
     after_drill_down: bool,
 ) -> Result<Value, String> {
     state
         .0
         .store
-        .rule_item(&goal_id, &item_id, approve, after_drill_down)
+        .reject_item(&goal_id, &item_id, after_drill_down)
         .map_err(|e| e.to_string())?;
+    resync(&state, &goal_id); // the marker mirrors the bump for the delivery channel
     Ok(json!({"ok": true}))
+}
+
+/// Per-item opt-out: "I don't want this one checked". The gate then ignores it
+/// entirely. Human-only, exactly like rulings — an agent must never be able to
+/// excuse itself from a check.
+#[tauri::command]
+fn waive_item(
+    state: State<'_, App>,
+    goal_id: String,
+    item_id: String,
+    waived: bool,
+) -> Result<Value, String> {
+    state
+        .0
+        .store
+        .waive_item(&goal_id, &item_id, waived)
+        .map_err(|e| e.to_string())?;
+    // Waiving moves the contract version too (an agent still checking a waived
+    // item is wasted work), so the marker has to mirror the bump or the
+    // delivery channel's zero-network check would never notice.
+    resync(&state, &goal_id);
+    Ok(json!({"ok": true}))
+}
+
+/// Type a nudge into the pane where this goal's agent session is running, so a
+/// contract change reaches it now instead of at its next tool call. Returns
+/// `"sent"`, `"no_agent"` (the pane is there but sitting at a bare shell prompt:
+/// nothing is running to be prompted, and the text would have been run as a
+/// shell command), or `"unbound"` (no session, no pane recorded, or that pane is
+/// gone: `/clear` moved the session, or the human closed the terminal).
+///
+/// Note what is NOT a case here: an agent that is mid-turn. Typing at it is
+/// exactly what this is for — the keystrokes land in its input box and Enter
+/// queues the message. Only "there is no program there" is a refusal.
+#[tauri::command]
+fn send_to_agent(
+    state: State<'_, App>,
+    terminals: State<'_, terminal::Terminals>,
+    goal_id: String,
+    note: String,
+) -> Result<String, String> {
+    let goal = state.0.store.get_goal(&goal_id).ok_or("goal not found")?;
+    // Newest binding first: after a resume the same goal can carry several
+    // sessions, and the live one is the last we heard from.
+    let Some(pane) = goal.sessions.iter().rev().find_map(|s| s.pane) else {
+        return Ok("unbound".to_string());
+    };
+    let text = agent_note(
+        &goal.id,
+        goal.contract_version,
+        goal.agent_synced_version,
+        &note,
+    );
+    Ok(match terminal::prompt_pane(&terminals, pane, &text)? {
+        Some(true) => "sent",
+        Some(false) => "no_agent",
+        None => "unbound",
+    }
+    .to_string())
+}
+
+/// The nudge itself. Composed here — one testable place — and deliberately a
+/// SINGLE line: it is typed into a shell, where a newline would submit.
+/// The commands must stay identical to what the injected protocol and the gate's
+/// block reasons tell the agent to run, `--goal` included; three different
+/// spellings of the same instruction is how an agent ends up guessing.
+fn agent_note(goal_id: &str, contract_version: u64, synced_version: u64, note: &str) -> String {
+    let mut text = format!("[witnos] The verification contract moved to v{contract_version}.");
+    // The human's own words come before the mechanics: that is the part the
+    // agent has to act on, and a long note must not bury it.
+    let collapsed = note.split_whitespace().collect::<Vec<_>>().join(" ");
+    if !collapsed.is_empty() {
+        text.push_str(&format!(" From the user: {collapsed}"));
+    }
+    text.push_str(&format!(
+        " Run `witnos contract show --goal {goal_id} --since {synced_version}` to see what changed, \
+         address it, then `witnos reconcile --goal {goal_id} --to {contract_version}`."
+    ));
+    text
 }
 
 /// Record the drill-down (that log is the requirements spec for the future
@@ -451,7 +535,9 @@ fn main() {
             create_goal,
             add_item,
             edit_item,
-            rule_item,
+            reject_item,
+            waive_item,
+            send_to_agent,
             drill_down,
             close_goal,
             delete_goal,
@@ -464,6 +550,7 @@ fn main() {
             terminal::term_write,
             terminal::term_resize,
             terminal::term_try_cd,
+            terminal::term_try_prompt,
             terminal::term_kill
         ])
         .build(tauri::generate_context!())
@@ -477,7 +564,32 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{first_number, windows_open_cmdline};
+    use super::{agent_note, first_number, windows_open_cmdline};
+
+    /// The nudge is typed into a shell, so "one line" is a hard property, not a
+    /// preference — including when the human's note is a multi-line paste.
+    #[test]
+    fn the_agent_note_is_one_line_and_names_the_goal() {
+        let note = agent_note("g-7", 5, 3, "the palette\nis  still\r\nwrong");
+        assert!(
+            !note.contains('\n') && !note.contains('\r'),
+            "must be a single line: {note:?}"
+        );
+        assert!(note.contains("From the user: the palette is still wrong"), "{note}");
+        assert!(note.contains("moved to v5"), "{note}");
+        // Same commands, same flags as the protocol text and the block reasons.
+        assert!(note.contains("witnos contract show --goal g-7 --since 3"), "{note}");
+        assert!(note.contains("witnos reconcile --goal g-7 --to 5"), "{note}");
+    }
+
+    /// An empty note is the common case (the human just edited the contract and
+    /// wants the agent to look now) and must not leave a dangling label.
+    #[test]
+    fn the_agent_note_omits_an_empty_human_note() {
+        let note = agent_note("g-7", 2, 0, "   ");
+        assert!(!note.contains("From the user"), "{note}");
+        assert!(note.contains("witnos contract show --goal g-7 --since 0"), "{note}");
+    }
 
     #[test]
     fn cmd_metacharacters_cannot_leave_the_quoted_target() {

@@ -22,14 +22,12 @@ pub fn now() -> UnixSeconds {
 #[serde(rename_all = "snake_case")]
 pub enum GoalStatus {
     Running,
-    /// Agent released by the gate; subjective items await human rulings.
-    /// This is a NORMAL terminal state of a goal.
+    /// Agent released by the gate; the work is presumed correct and the human
+    /// may still send items back. This is a NORMAL terminal state of a goal.
+    /// (`ruled` in goals stored before approval was removed from the domain
+    /// lands here: there is no longer a "fully ruled" state to reach.)
+    #[serde(alias = "ruled")]
     AwaitingRulings,
-    /// Parked like `AwaitingRulings`, but every subjective item carries a
-    /// human verdict — nothing awaits a ruling. The two are a pure derivation
-    /// of item statuses (recomputed on every store mutation and on load);
-    /// fresh evidence re-laying a rejected item moves the goal back.
-    Ruled,
     /// Turn ended without meeting the release condition (consecutive-block
     /// cap, user interrupt). Re-issuing or resuming moves it back to Running.
     TurnEndedUnmet,
@@ -42,6 +40,12 @@ pub struct SessionBinding {
     pub agent: String,
     pub session_id: SessionId,
     pub bound_at: UnixSeconds,
+    /// Which terminal pane the session runs in, when Witnos spawned it (the
+    /// app stamps `WITNOS_PANE` on every shell; the binding hook forwards it).
+    /// This is what lets the human type a correction back into the shell their
+    /// agent is actually sitting in. `None` = we don't know where it lives.
+    #[serde(default)]
+    pub pane: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,16 +76,21 @@ pub enum Class {
 #[serde(rename_all = "snake_case")]
 pub enum ItemStatus {
     Open,
-    /// Interpretation + evidence laid out (the release condition for
-    /// subjective items — passing still requires a human nod).
+    /// Interpretation + evidence laid out — the terminal state of a subjective
+    /// item. The agent's work is presumed correct from here; the human's lever
+    /// is editing the yardstick or sending the item back, not blessing it.
+    /// (`approved` in goals stored before approval was removed lands here — an
+    /// approved item was a laid item the human had also nodded at.)
+    #[serde(alias = "approved")]
     Laid,
     /// Objective only: oracle passed, agent self-passed.
     Passed,
-    /// Subjective only: human nodded.
-    Approved,
-    /// Subjective only: human rejected; while the goal is running the agent
-    /// must re-address it (new evidence moves it back to Laid).
+    /// Subjective only: the human sent it back; while the goal is running the
+    /// agent must re-address it (new evidence moves it back to Laid).
     Rejected,
+    /// The human opted this one item out — `unwatch` narrowed to a single
+    /// item. The gate ignores it entirely: no evidence demanded, no block.
+    Waived,
 }
 
 /// Where a contract item came from — the instrumentation for the core bet.
@@ -209,10 +218,17 @@ pub enum EventKind {
         evidence_id: EvidenceId,
         pointer: Pointer,
     },
+    /// The human sent an item back. `after_drill_down` is the
+    /// anti-rubber-stamping signal: did they open the evidence original first?
     Ruling {
         item_id: ItemId,
         verdict: ItemStatus,
         after_drill_down: bool,
+    },
+    /// The human opted one item out, or put it back in scope.
+    Waiver {
+        item_id: ItemId,
+        waived: bool,
     },
     TurnEnded {
         met: bool,
@@ -236,6 +252,18 @@ pub struct Goal {
     pub contract_version: Version,
     /// Where the agent last reconciled to.
     pub agent_synced_version: Version,
+    /// The version at which a HUMAN last moved the yardstick — an add, an edit,
+    /// a rejection, a waiver. NOT moved by anything the agent does.
+    ///
+    /// It exists because `contract_version > agent_synced_version` cannot mean
+    /// "the human changed something the agent hasn't read": the agent bumps the
+    /// contract itself every time it lays an item, so that comparison is true
+    /// through ordinary mid-run work. The UI's "send it to the agent now" offer
+    /// compares against this instead, so it appears when there is actually
+    /// something of the human's to deliver — an affordance that is always lit is
+    /// noise, and principle 4 spends the human's attention nowhere else.
+    #[serde(default)]
+    pub last_human_edit_version: Version,
     pub sessions: Vec<SessionBinding>,
     pub items: Vec<Item>,
     pub evidence: Vec<Evidence>,

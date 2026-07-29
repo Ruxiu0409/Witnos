@@ -68,6 +68,21 @@ pub fn in_witnos_terminal() -> bool {
     std::env::var("WITNOS_TERMINAL").is_ok_and(|v| !v.trim().is_empty())
 }
 
+/// Which Witnos terminal pane this hook is running under, stamped by the app
+/// alongside `WITNOS_TERMINAL` and inherited the same way. The core records it
+/// on the session binding so the human can type a correction back into the
+/// shell their agent actually sits in.
+///
+/// Missing or unparseable is `None`, never an error: every caller of this is a
+/// hook, and not knowing the pane must never cost anyone a goal.
+pub fn witnos_pane() -> Option<u32> {
+    std::env::var("WITNOS_PANE")
+        .ok()?
+        .trim()
+        .parse::<u32>()
+        .ok()
+}
+
 /// Was this session ever handed a goal in this project? The hooks' own book
 /// (`.witnos/instructed.json`) is the record, and only key PRESENCE is read
 /// here, so both its shapes answer the question.

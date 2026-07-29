@@ -1,9 +1,11 @@
 //! The central state machine's release condition.
 //!
-//! Gate release ≠ item pass: subjective items pass only on a human nod, but
-//! the agent never waits for the human — so release requires only that every
-//! subjective item is LAID (interpretation + fresh evidence), every objective
-//! item is PASSED, and the agent has reconciled against the latest contract.
+//! Gate release ≠ the human agreeing: the agent never waits for a human, so
+//! release requires only that every subjective item is LAID (interpretation +
+//! fresh evidence), every objective item is PASSED, and the agent has
+//! reconciled against the latest contract. The human's lever is editing the
+//! contract or sending an item back — both of which move the version and land
+//! right back here.
 
 use crate::types::*;
 
@@ -22,6 +24,12 @@ pub fn evaluate(goal: &Goal) -> GateOutcome {
     }
 
     for item in &goal.items {
+        // The human opted this one out: not blocked on, no evidence demanded,
+        // not even mentioned — per-goal opt-out narrowed to a single item.
+        if item.status == ItemStatus::Waived {
+            continue;
+        }
+
         let fresh = goal
             .evidence
             .iter()
@@ -39,7 +47,7 @@ pub fn evaluate(goal: &Goal) -> GateOutcome {
                 }
             }
             Class::Subjective => match item.status {
-                ItemStatus::Laid | ItemStatus::Approved => {
+                ItemStatus::Laid => {
                     if item.interpretation.is_none() {
                         reasons.push(format!(
                             "subjective item has no interpretation: \"{}\"",

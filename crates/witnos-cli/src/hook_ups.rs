@@ -176,7 +176,13 @@ fn existing_goal(
                 ep.port, goal_id
             ))
             .set("Authorization", &auth)
-            .send_json(json!({"session_id": session, "agent": "claude-code"}));
+            .send_json(json!({
+                "session_id": session,
+                "agent": "claude-code",
+                // Where this session lives, so the human's correction can be
+                // typed back into it. Absent = started outside Witnos.
+                "pane": paths::witnos_pane(),
+            }));
         if let Ok(resp) = agent
             .get(&format!("http://127.0.0.1:{}/goals/{}", ep.port, goal_id))
             .set("Authorization", &auth)
@@ -217,6 +223,7 @@ fn auto_create_goal(
             "project_dir": root.to_string_lossy(),
             "session_id": session,
             "agent": "claude-code",
+            "pane": paths::witnos_pane(),
         }))
         .ok()?
         .into_json()
@@ -299,9 +306,12 @@ fn protocol_text(
          5. After laying the initial contract, do ONE blindspot pass: `witnos item lay --goal {goal_id} --blindspot` with checks the user \
          likely didn't think to ask for.\n\
          6. The contract is alive: when it changes you'll see a delta after a tool call — address it, then \
-         `witnos reconcile --goal {goal_id} --to <version>`.\n\
+         `witnos reconcile --goal {goal_id} --to <version>`. A delta may say an item was SENT BACK (the user judged \
+         your evidence didn't answer it): fix it your way, then attach new evidence. An item marked WAIVED needs \
+         nothing from you.\n\
          7. Stopping is gated: you are released only when objective items passed, every subjective item carries \
-         interpretation + evidence, and you've reconciled to the latest contract version. Human rulings on subjective \
-         items happen AFTER you stop — \"awaiting rulings\" is a normal way to finish; never wait for them."
+         interpretation + evidence, and you've reconciled to the latest contract version. Nobody signs off on your \
+         subjective items — lay out your interpretation and the evidence you judged by, then move on. Never wait for \
+         the user; if they disagree they edit the contract or send the item back, and you'll see it in a delta."
     )
 }

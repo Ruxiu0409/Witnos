@@ -26,18 +26,20 @@ fn run_bin(
     home: &Path,
     stdin: Option<&str>,
 ) -> (String, String, bool) {
-    run_bin_scoped(args, project, home, stdin, true)
+    run_bin_scoped(args, project, home, stdin, true, None)
 }
 
 /// `from_witnos` = pretend the session was launched from Witnos's own embedded
-/// terminal (the scope stamp the app sets). Always set or cleared explicitly,
-/// never inherited, so the suite means the same thing wherever it is run.
+/// terminal (the scope stamp the app sets), `pane` = which pane it was launched
+/// in. Always set or cleared explicitly, never inherited, so the suite means the
+/// same thing wherever it is run — including from a Witnos pane.
 fn run_bin_scoped(
     args: &[&str],
     project: &Path,
     home: &Path,
     stdin: Option<&str>,
     from_witnos: bool,
+    pane: Option<u32>,
 ) -> (String, String, bool) {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_witnos"));
     cmd.args(args)
@@ -51,6 +53,10 @@ fn run_bin_scoped(
     } else {
         cmd.env_remove("WITNOS_TERMINAL");
     }
+    match pane {
+        Some(p) => cmd.env("WITNOS_PANE", p.to_string()),
+        None => cmd.env_remove("WITNOS_PANE"),
+    };
     let mut child = cmd.spawn().unwrap();
     child
         .stdin
@@ -306,6 +312,22 @@ fn ups_scoped(
     prompt: &str,
     from_witnos: bool,
 ) -> String {
+    ups_full(project, home, session, prompt, from_witnos, None)
+}
+
+/// From Witnos's terminal, in a known pane — what the app actually spawns.
+fn ups_in_pane(project: &Path, home: &Path, session: &str, prompt: &str, pane: u32) -> String {
+    ups_full(project, home, session, prompt, true, Some(pane))
+}
+
+fn ups_full(
+    project: &Path,
+    home: &Path,
+    session: &str,
+    prompt: &str,
+    from_witnos: bool,
+    pane: Option<u32>,
+) -> String {
     let stdin = format!(
         r#"{{"session_id":"{session}","cwd":"{}","prompt":"{prompt}"}}"#,
         project.display()
@@ -316,8 +338,18 @@ fn ups_scoped(
         home,
         Some(&stdin),
         from_witnos,
+        pane,
     )
     .0
+}
+
+fn get_goal(core: &AutoCore, id: &str) -> Value {
+    ureq::get(&format!("{}/goals/{id}", core.base))
+        .set("Authorization", &core.auth)
+        .call()
+        .unwrap()
+        .into_json()
+        .unwrap()
 }
 
 #[test]
@@ -374,6 +406,35 @@ fn ups_creates_no_goal_outside_the_witnos_terminal() {
     let out = ups_scoped(&project, &home, "s-elsewhere", "Fix the login bug", true);
     assert!(out.contains("auto-created"), "got: {out}");
     assert_eq!(goals_list(&core).len(), 1);
+}
+
+/// The pane stamp travels the whole way: the app stamps `WITNOS_PANE` on the
+/// shell, the agent's hook inherits it, and the core records WHERE this
+/// session lives — the address a human correction gets typed back to. Not
+/// knowing the pane is never an error; the goal is created either way.
+#[test]
+fn ups_forwards_the_terminal_pane_onto_the_session_binding() {
+    let project = temp_dir("aups-pane");
+    let home = temp_dir("aups-pane-home");
+    let core = start_auto_core(&home, &project);
+
+    let out = ups_in_pane(&project, &home, "s-pane", "Fix the login bug", 4);
+    assert!(out.contains("additionalContext"), "got: {out}");
+    let goals = goals_list(&core);
+    let g = get_goal(&core, goals[0]["id"].as_str().unwrap());
+    assert_eq!(g["sessions"][0]["session_id"], "s-pane", "got: {}", g["sessions"]);
+    assert_eq!(g["sessions"][0]["pane"], 4, "got: {}", g["sessions"]);
+
+    // A shell with no stamp (any other terminal, or an older app build) binds
+    // exactly as before, just without a known pane.
+    let out = ups(&project, &home, "s-nopane", "Refactor payments");
+    assert!(out.contains("additionalContext"), "got: {out}");
+    let g = goals_list(&core)
+        .into_iter()
+        .find(|g| g["title"] == "Refactor payments")
+        .expect("the goal must still be created");
+    let g = get_goal(&core, g["id"].as_str().unwrap());
+    assert!(g["sessions"][0]["pane"].is_null(), "got: {}", g["sessions"]);
 }
 
 #[test]

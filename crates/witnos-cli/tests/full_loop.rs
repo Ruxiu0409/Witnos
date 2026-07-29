@@ -74,8 +74,10 @@ fn run_bin(
         .env("WITNOS_HOME", home)
         // The loop under test is an agent running in Witnos's own terminal,
         // which is the only kind auto mode covers. Set explicitly rather than
-        // inherited, so the suite means the same thing wherever it runs.
+        // inherited, so the suite means the same thing wherever it runs —
+        // including when the suite itself is run from a Witnos pane.
         .env("WITNOS_TERMINAL", "1")
+        .env_remove("WITNOS_PANE")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -275,7 +277,10 @@ fn auto_mode_gates_each_session_against_its_own_goal() {
     // -- pre-goal, the gate already fails closed (the dir was opted in).
     let out = hook_as("stop", "sA", &project, &home);
     assert!(out.contains(r#""decision":"block""#), "got: {out}");
-    assert!(out.contains("no goal"), "reason must explain the unbound session: {out}");
+    assert!(
+        out.contains("never got a goal"),
+        "reason must explain the unbound session: {out}"
+    );
 
     // -- session A's first prompt creates goal A; protocol carries --goal.
     let out = ups_as("sA", "Fix the login bug", &project, &home);
@@ -351,6 +356,105 @@ fn auto_mode_gates_each_session_against_its_own_goal() {
         ga,
         "watching session goals must survive the restart: {m}"
     );
+}
+
+/// Sending an item back must reach an agent that is still RUNNING — through the
+/// delivery channel, like any other contract move — instead of waiting at the
+/// gate for it to try to stop. That means the version bumps, the marker mirrors
+/// the bump (or the delivery channel's local check would never look), and the
+/// delta says "sent back" rather than reading as a fresh edit.
+#[test]
+fn rejection_reaches_a_running_agent_through_the_delivery_channel() {
+    let home = temp_dir("rej-home");
+    let project = temp_dir("rej-project");
+    let core = start_core(&home);
+
+    let goal = core.post("/goals", json!({"title": "rejection demo"}));
+    let gid = goal["id"].as_str().unwrap().to_string();
+    core.post(
+        &format!("/goals/{gid}/watch"),
+        json!({"project_dir": project.to_str().unwrap()}),
+    );
+
+    // The agent lays one subjective item and completes its side of it.
+    core.post(
+        &format!("/goals/{gid}/items"),
+        json!({"actor": "agent", "items": [
+            {"claim": "UI feels calm", "check": "look at it", "origin": {"kind": "agent_initial"}}
+        ]}),
+    );
+    let item = core.get(&format!("/goals/{gid}"))["items"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    core.post(
+        &format!("/goals/{gid}/interpret"),
+        json!({"item_id": item, "text": "calm = no motion"}),
+    );
+    core.post(
+        &format!("/goals/{gid}/evidence"),
+        json!({
+            "item_id": item,
+            "conclusion": "holds",
+            "basis": "static layout",
+            "provenance": [{"kind": "command", "cmd": "screencapture -x shot.png"}],
+        }),
+    );
+    core.post(&format!("/goals/{gid}/reconcile"), json!({"to_version": 1}));
+    assert_eq!(hook("stop", &project, &home).trim(), "", "should release");
+
+    // Delivery is quiet: the agent has seen everything.
+    assert_eq!(hook("post-tool-use", &project, &home).trim(), "");
+
+    // The human sends it back after opening the evidence original.
+    core.post(
+        &format!("/goals/{gid}/rulings"),
+        json!({"item_id": item, "after_drill_down": true}),
+    );
+    let m: Value = serde_json::from_str(
+        &std::fs::read_to_string(project.join(".witnos/armed.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        m["default_goal"]["contract_version"], 2,
+        "the marker must mirror the rejection's bump, or delivery never looks: {m}"
+    );
+
+    // …and the running agent is told, in the same delta channel as an edit.
+    let out = hook("post-tool-use", &project, &home);
+    assert!(out.contains("additionalContext"), "got: {out}");
+    assert!(out.contains("UI feels calm"), "got: {out}");
+    assert!(out.contains("SENT BACK"), "the delta must read as a rejection: {out}");
+
+    // The gate holds too, with the wording that steers best.
+    let out = hook("stop", &project, &home);
+    assert!(out.contains(r#""decision":"block""#), "got: {out}");
+    assert!(out.contains("rejected by the human"), "got: {out}");
+
+    // Fresh evidence + reconcile → released again.
+    core.post(
+        &format!("/goals/{gid}/evidence"),
+        json!({
+            "item_id": item,
+            "conclusion": "now it really holds",
+            "basis": "removed the last transition",
+            "provenance": [{"kind": "file", "path": "src/app.css"}],
+        }),
+    );
+    core.post(&format!("/goals/{gid}/reconcile"), json!({"to_version": 2}));
+    assert_eq!(hook("stop", &project, &home).trim(), "", "re-laid → release");
+
+    // The anti-rubber-stamping signal is on the record.
+    let events = core.get(&format!("/goals/{gid}"))["events"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let ruling = events
+        .iter()
+        .find(|e| e["kind"] == "ruling")
+        .expect("the ruling must be recorded");
+    assert_eq!(ruling["after_drill_down"], true, "got: {ruling}");
+    assert_eq!(ruling["verdict"], "rejected", "got: {ruling}");
 }
 
 /// Mid-run /clear (or closed terminal) must not leave a zombie "running"

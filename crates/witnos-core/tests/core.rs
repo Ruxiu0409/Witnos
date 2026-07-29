@@ -132,7 +132,7 @@ fn subjective_needs_interpretation_before_it_counts_as_laid() {
 }
 
 #[test]
-fn full_loop_release_block_and_rulings() {
+fn full_loop_release_block_and_rejection() {
     let (store, _dir) = temp_store();
     let goal = store.create_goal("demo").unwrap();
 
@@ -201,20 +201,32 @@ fn full_loop_release_block_and_rulings() {
         GoalStatus::AwaitingRulings
     );
 
-    // Human rejects → blocked again until re-addressed; approve after re-lay.
-    store.rule_item(&goal.id, subj, false, true).unwrap();
-    let out = evaluate(&store.get_goal(&goal.id).unwrap());
+    // The human sends the item back. That is a move on the yardstick, so the
+    // version bumps and the item lands in the delta the delivery channel
+    // computes from what the agent had already seen — a running agent hears
+    // about it, instead of the news waiting at the gate.
+    let seen = store.get_goal(&goal.id).unwrap().contract_version;
+    store.reject_item(&goal.id, subj, true).unwrap();
+    let g = store.get_goal(&goal.id).unwrap();
+    assert_eq!(g.contract_version, seen + 1, "a rejection moves the yardstick");
+    assert_eq!(g.item(subj).unwrap().last_edited_version, g.contract_version);
+    assert!(
+        g.items_since(seen).iter().any(|i| i.id == *subj),
+        "the rejection must be in the delta"
+    );
+    let out = evaluate(&g);
     assert!(out.reasons.iter().any(|r| r.contains("rejected")));
+
+    // Fresh evidence re-lays it; reconciling to the new version releases again.
     store.add_evidence(&goal.id, subj, some_evidence()).unwrap();
     assert_eq!(
         store.get_goal(&goal.id).unwrap().item(subj).unwrap().status,
         ItemStatus::Laid
     );
-    store.rule_item(&goal.id, subj, true, false).unwrap();
-    assert_eq!(
-        store.get_goal(&goal.id).unwrap().item(subj).unwrap().status,
-        ItemStatus::Approved
-    );
+    store
+        .reconcile(&goal.id, "sess-1", seen + 1, vec![subj.clone()])
+        .unwrap();
+    assert!(evaluate(&store.get_goal(&goal.id).unwrap()).release);
 
     // The reinterpretation trail exists (principle 6's raw material).
     let g = store.get_goal(&goal.id).unwrap();
@@ -241,8 +253,10 @@ fn agent_must_not_edit_human_items_and_rulings_are_subjective_only() {
         .unwrap_err();
     assert!(matches!(err, StoreError::Invalid(_)));
 
-    let err = store.rule_item(&goal.id, &ids[1], true, false).unwrap_err();
+    let err = store.reject_item(&goal.id, &ids[1], false).unwrap_err();
     assert!(matches!(err, StoreError::Invalid(_)));
+    // A refused ruling must not have moved the contract version either.
+    assert_eq!(store.get_goal(&goal.id).unwrap().contract_version, 2);
 
     let err = store.report_oracle(&goal.id, &ids[0], true).unwrap_err();
     assert!(matches!(err, StoreError::Invalid(_)));
@@ -348,7 +362,7 @@ fn delete_goal_removes_memory_and_disk() {
 fn create_auto_goal_is_idempotent_per_session() {
     let (store, _dir) = temp_store();
     let (a, created) = store
-        .create_auto_goal("fix login", "/proj", "sA", "claude-code")
+        .create_auto_goal("fix login", "/proj", "sA", "claude-code", None)
         .unwrap();
     assert!(created);
     assert!(a.watching);
@@ -360,7 +374,7 @@ fn create_auto_goal_is_idempotent_per_session() {
     // per-goal decision must never be undone by a re-fired hook.
     store.set_watch(&a.id, None, false).unwrap();
     let (again, created) = store
-        .create_auto_goal("fix login retry", "/proj", "sA", "claude-code")
+        .create_auto_goal("fix login retry", "/proj", "sA", "claude-code", None)
         .unwrap();
     assert!(!created);
     assert_eq!(again.id, a.id);
@@ -368,7 +382,7 @@ fn create_auto_goal_is_idempotent_per_session() {
 
     // A different session gets its own goal.
     let (b, created) = store
-        .create_auto_goal("refactor payments", "/proj", "sB", "claude-code")
+        .create_auto_goal("refactor payments", "/proj", "sB", "claude-code", None)
         .unwrap();
     assert!(created);
     assert_ne!(b.id, a.id);
@@ -378,19 +392,19 @@ fn create_auto_goal_is_idempotent_per_session() {
 fn find_session_goal_prefers_the_owned_goal() {
     let (store, _dir) = temp_store();
     let (a, _) = store
-        .create_auto_goal("own goal", "/proj", "sA", "claude-code")
+        .create_auto_goal("own goal", "/proj", "sA", "claude-code", None)
         .unwrap();
     let manual = store.create_goal("manual").unwrap();
     store
         .set_watch(&manual.id, Some("/proj".into()), true)
         .unwrap();
     // Opportunistic bind of sA to the manual goal must not shadow ownership.
-    store.bind_session(&manual.id, "claude-code", "sA").unwrap();
+    store.bind_session(&manual.id, "claude-code", "sA", None).unwrap();
 
     let found = store.find_session_goal("/proj", "sA").unwrap();
     assert_eq!(found.id, a.id);
     // A session only bound (not owning) resolves to what it's bound to.
-    store.bind_session(&manual.id, "claude-code", "sB").unwrap();
+    store.bind_session(&manual.id, "claude-code", "sB", None).unwrap();
     assert_eq!(store.find_session_goal("/proj", "sB").unwrap().id, manual.id);
     assert!(store.find_session_goal("/proj", "sC").is_none());
     assert!(store.find_session_goal("/elsewhere", "sA").is_none());
@@ -400,15 +414,15 @@ fn find_session_goal_prefers_the_owned_goal() {
 fn marker_compute_derives_sessions_and_default() {
     let (store, _dir) = temp_store();
     let (a, _) = store
-        .create_auto_goal("auto A", "/proj", "sA", "claude-code")
+        .create_auto_goal("auto A", "/proj", "sA", "claude-code", None)
         .unwrap();
     let manual = store.create_goal("manual").unwrap();
     store
         .set_watch(&manual.id, Some("/proj".into()), true)
         .unwrap();
-    store.bind_session(&manual.id, "claude-code", "sB").unwrap();
+    store.bind_session(&manual.id, "claude-code", "sB", None).unwrap();
     // Opportunistic cross-bind: sA also lands on the manual goal.
-    store.bind_session(&manual.id, "claude-code", "sA").unwrap();
+    store.bind_session(&manual.id, "claude-code", "sA", None).unwrap();
 
     let goals = store.goals_for_dir("/proj");
     let m = marker::compute(true, &goals).unwrap();
@@ -498,9 +512,11 @@ fn registry_round_trips_and_canonicalizes() {
     assert!(ProjectRegistry::load(&home).list().is_empty());
 }
 
+/// A goal stays parked in `AwaitingRulings` after release: the human may still
+/// send items back, so "you can still intervene" never stops being true.
 #[test]
-fn parked_goal_status_derives_ruled_from_rulings() {
-    let (store, dir) = temp_store();
+fn a_released_goal_parks_awaiting_rulings_and_stays_there() {
+    let (store, _dir) = temp_store();
     let goal = store.create_goal("demo").unwrap();
     let ids = store
         .lay_items(
@@ -522,42 +538,308 @@ fn parked_goal_status_derives_ruled_from_rulings() {
     let status = |s: &Store| s.get_goal(&goal.id).unwrap().status;
     assert_eq!(status(&store), GoalStatus::AwaitingRulings);
 
-    // Half ruled → still awaiting.
-    store.rule_item(&goal.id, &ids[0], true, false).unwrap();
+    // Sending one back does not change the parked state — only the item's.
+    store.reject_item(&goal.id, &ids[0], false).unwrap();
     assert_eq!(status(&store), GoalStatus::AwaitingRulings);
+    assert_eq!(
+        store.get_goal(&goal.id).unwrap().item(&ids[0]).unwrap().status,
+        ItemStatus::Rejected
+    );
+}
 
-    // Last laid item ruled (a rejection is a ruling too) → ruled.
-    store.rule_item(&goal.id, &ids[1], false, false).unwrap();
-    assert_eq!(status(&store), GoalStatus::Ruled);
+/// On-disk back-compat: real goals under `~/.witnos/` were written while
+/// approval existed. `ruled` was a goal state, `approved` an item state; both
+/// must load, and an approved item must come back as what it always was
+/// underneath — laid, with its evidence still counting.
+#[test]
+fn legacy_ruled_and_approved_statuses_still_load() {
+    let (store, dir) = temp_store();
+    let goal = store.create_goal("demo").unwrap();
+    let ids = store
+        .lay_items(
+            &goal.id,
+            vec![subjective("calm UI", Origin::AgentInitial)],
+            Actor::Agent,
+        )
+        .unwrap();
+    store
+        .set_interpretation(&goal.id, &ids[0], "calm = no motion")
+        .unwrap();
+    store.add_evidence(&goal.id, &ids[0], some_evidence()).unwrap();
+    store.reconcile(&goal.id, "s", 1, vec![]).unwrap();
+    store
+        .record_gate_decision(&goal.id, GateDecisionKind::Release, None)
+        .unwrap();
 
-    // Re-ruling flips a verdict, not the parked state.
-    store.rule_item(&goal.id, &ids[0], false, false).unwrap();
-    assert_eq!(status(&store), GoalStatus::Ruled);
-
-    // Fresh evidence re-lays a rejected item → back to awaiting.
-    store.add_evidence(&goal.id, &ids[1], some_evidence()).unwrap();
-    assert_eq!(status(&store), GoalStatus::AwaitingRulings);
-    store.rule_item(&goal.id, &ids[1], true, false).unwrap();
-    store.rule_item(&goal.id, &ids[0], true, false).unwrap();
-    assert_eq!(status(&store), GoalStatus::Ruled);
-
-    // A goal persisted before the split (parked as awaiting_rulings though
-    // fully ruled) heals when the store loads it.
+    // Rewrite the file the way the old domain would have left it.
     let path = dir.join(format!("{}.json", goal.id));
-    let stale = std::fs::read_to_string(&path)
+    let legacy = std::fs::read_to_string(&path)
         .unwrap()
-        .replace("\"ruled\"", "\"awaiting_rulings\"");
-    std::fs::write(&path, stale).unwrap();
+        .replace("\"status\": \"awaiting_rulings\"", "\"status\": \"ruled\"")
+        .replace("\"status\": \"laid\"", "\"status\": \"approved\"");
+    assert!(legacy.contains("\"ruled\"") && legacy.contains("\"approved\""));
+    std::fs::write(&path, legacy).unwrap();
+
     drop(store);
     let store = Store::open(&dir).unwrap();
-    assert_eq!(status(&store), GoalStatus::Ruled);
+    let g = store.get_goal(&goal.id).unwrap();
+    assert_eq!(g.status, GoalStatus::AwaitingRulings);
+    assert_eq!(g.item(&ids[0]).unwrap().status, ItemStatus::Laid);
+    // And the loaded item is treated as laid, not as unfinished work.
+    assert!(evaluate(&g).release, "{:?}", evaluate(&g).reasons);
+}
+
+/// Per-item opt-out: the gate neither blocks on a waived item nor demands
+/// evidence for it, and putting it back in scope makes it live again.
+#[test]
+fn the_gate_ignores_a_waived_item() {
+    let (store, _dir) = temp_store();
+    let goal = store.create_goal("demo").unwrap();
+    let ids = store
+        .lay_items(
+            &goal.id,
+            vec![
+                subjective("the part the user cares about", Origin::UserPreRun),
+                subjective("the part they don't", Origin::UserPreRun),
+            ],
+            Actor::Human,
+        )
+        .unwrap();
+    store.set_interpretation(&goal.id, &ids[0], "how I read it").unwrap();
+    store.add_evidence(&goal.id, &ids[0], some_evidence()).unwrap();
+    store.reconcile(&goal.id, "s", 2, vec![]).unwrap();
+
+    let out = evaluate(&store.get_goal(&goal.id).unwrap());
+    assert!(!out.release);
+    assert_eq!(out.reasons.len(), 1, "{:?}", out.reasons);
+
+    // Waived: the item stops existing as far as the gate is concerned…
+    store.waive_item(&goal.id, &ids[1], true).unwrap();
+    let g = store.get_goal(&goal.id).unwrap();
+    assert_eq!(g.item(&ids[1]).unwrap().status, ItemStatus::Waived);
+    let out = evaluate(&g);
+    assert!(
+        !out.reasons.iter().any(|r| r.contains("the part they don't")),
+        "a waived item must not be mentioned at all: {:?}",
+        out.reasons
+    );
+    // …but it IS news for a running agent — otherwise it keeps producing
+    // evidence nobody will read — so it moves the yardstick like an edit and
+    // lands in the delta the delivery channel computes.
+    assert_eq!(g.contract_version, 3);
+    assert_eq!(g.last_human_edit_version, 3);
+    assert_eq!(g.item(&ids[1]).unwrap().last_edited_version, 3);
+    let delta = g.items_since(2);
+    assert_eq!(delta.len(), 1, "only the waived item changed");
+    assert_eq!(delta[0].id, ids[1]);
+    // The one round the bump costs: reconcile, and nothing else is outstanding.
+    assert_eq!(out.reasons.len(), 1, "{:?}", out.reasons);
+    assert!(out.reasons[0].contains("contract moved"), "{:?}", out.reasons);
+    store.reconcile(&goal.id, "s", 3, vec![]).unwrap();
+    let out = evaluate(&store.get_goal(&goal.id).unwrap());
+    assert!(out.release, "{:?}", out.reasons);
+
+    // Idempotent (a double-clicked toggle is not an error), and a no-op must
+    // not creep the version — that would stall the gate for nothing.
+    store.waive_item(&goal.id, &ids[1], true).unwrap();
+    assert_eq!(store.get_goal(&goal.id).unwrap().contract_version, 3);
+
+    // …and un-waiving puts it back in scope, equally as news.
+    store.waive_item(&goal.id, &ids[1], false).unwrap();
+    let g = store.get_goal(&goal.id).unwrap();
+    assert_eq!(g.item(&ids[1]).unwrap().status, ItemStatus::Open);
+    assert_eq!(g.contract_version, 4);
+    assert_eq!(g.item(&ids[1]).unwrap().last_edited_version, 4);
+    assert!(g.items_since(3).iter().any(|i| i.id == ids[1]));
+    let out = evaluate(&g);
+    assert!(!out.release);
+    assert!(
+        out.reasons.iter().any(|r| r.contains("the part they don't")),
+        "back in scope means back to being blocked on: {:?}",
+        out.reasons
+    );
+
+    // Un-waiving something that was never waived must not reset laid work, and
+    // must not move the version either.
+    store.waive_item(&goal.id, &ids[0], false).unwrap();
+    let g = store.get_goal(&goal.id).unwrap();
+    assert_eq!(g.item(&ids[0]).unwrap().status, ItemStatus::Laid);
+    assert_eq!(g.contract_version, 4);
+
+    // Both directions are on the record (the human's own trail).
+    let waivers = g
+        .events
+        .iter()
+        .filter(|e| matches!(e.kind, EventKind::Waiver { .. }))
+        .count();
+    assert_eq!(waivers, 2, "one waive, one un-waive");
+}
+
+/// Fix 2's whole point: the UI's "the agent hasn't seen your change" signal must
+/// answer for the HUMAN's moves only. The agent bumps `contract_version` itself
+/// on every item it lays, so a comparison against that number is lit through
+/// ordinary mid-run work — an affordance that is always on says nothing.
+#[test]
+fn only_human_moves_bump_last_human_edit_version() {
+    let (store, dir) = temp_store();
+    let goal = store.create_goal("demo").unwrap();
+    assert_eq!(goal.last_human_edit_version, 0);
+    let seen = |s: &Store| {
+        let g = s.get_goal(&goal.id).unwrap();
+        (g.contract_version, g.last_human_edit_version)
+    };
+
+    // The agent lays its initial contract: the yardstick moves, but none of it
+    // is news to the agent — it wrote it.
+    let agent_ids = store
+        .lay_items(
+            &goal.id,
+            vec![
+                subjective("calm UI", Origin::AgentInitial),
+                objective("it builds", Actor::Agent),
+            ],
+            Actor::Agent,
+        )
+        .unwrap();
+    assert_eq!(seen(&store), (2, 0));
+
+    // The agent's own edit of its own item: still not the human's doing.
+    store
+        .edit_item(
+            &goal.id,
+            &agent_ids[0],
+            Some("calm UI, no motion".into()),
+            None,
+            None,
+            Actor::Agent,
+        )
+        .unwrap();
+    assert_eq!(seen(&store), (3, 0));
+
+    // Everything the agent does to FILL IN an item leaves both alone or moves
+    // only the contract — never this.
+    store
+        .set_interpretation(&goal.id, &agent_ids[0], "calm = nothing animates")
+        .unwrap();
+    store
+        .add_evidence(&goal.id, &agent_ids[0], some_evidence())
+        .unwrap();
+    store.report_oracle(&goal.id, &agent_ids[1], true).unwrap();
+    store
+        .add_evidence(&goal.id, &agent_ids[1], some_evidence())
+        .unwrap();
+    store.reconcile(&goal.id, "s", 3, vec![]).unwrap();
+    assert_eq!(seen(&store), (3, 0));
+
+    // The human adds an item: news.
+    let mine = store
+        .lay_items(
+            &goal.id,
+            vec![subjective("nothing shifts on hover", Origin::UserMidRun)],
+            Actor::Human,
+        )
+        .unwrap();
+    assert_eq!(seen(&store), (4, 4));
+
+    // The human edits one: news.
+    store
+        .edit_item(
+            &goal.id,
+            &mine[0],
+            Some("nothing shifts on hover, anywhere".into()),
+            None,
+            None,
+            Actor::Human,
+        )
+        .unwrap();
+    assert_eq!(seen(&store), (5, 5));
+
+    // Sending an item back: news (the agent has to re-address it).
+    store.reject_item(&goal.id, &agent_ids[0], true).unwrap();
+    assert_eq!(seen(&store), (6, 6));
+
+    // Waiving one: news too (stop working on it), both directions.
+    store.waive_item(&goal.id, &mine[0], true).unwrap();
+    assert_eq!(seen(&store), (7, 7));
+    store.waive_item(&goal.id, &mine[0], false).unwrap();
+    assert_eq!(seen(&store), (8, 8));
+
+    // A rejected write must leave neither number moved (`mutate` discards the
+    // draft) — an agent cannot make the UI claim the human edited something.
+    store
+        .edit_item(
+            &goal.id,
+            &mine[0],
+            Some("agents must not touch this".into()),
+            None,
+            None,
+            Actor::Agent,
+        )
+        .unwrap_err();
+    assert_eq!(seen(&store), (8, 8));
+
+    // Durable: it is what the UI reads on next open, not a live-only flag.
+    drop(store);
+    let store = Store::open(&dir).unwrap();
+    assert_eq!(seen(&store), (8, 8));
+}
+
+/// The pane a session's shell runs in is durable and never clobbered: it is the
+/// address a human correction gets typed back to.
+#[test]
+fn session_pane_survives_a_bind_round_trip() {
+    let (store, dir) = temp_store();
+    let (g, _) = store
+        .create_auto_goal("typed back", "/proj", "sP", "claude-code", Some(7))
+        .unwrap();
+    assert_eq!(g.sessions[0].pane, Some(7));
+
+    let pane_of = |s: &Store, sid: &str| {
+        s.get_goal(&g.id)
+            .unwrap()
+            .sessions
+            .iter()
+            .find(|b| b.session_id == sid)
+            .expect("binding exists")
+            .pane
+    };
+
+    // A later bind that doesn't know the pane must not erase it (the gate
+    // route binds from the agent's own env, which carries no pane).
+    store.bind_session(&g.id, "claude-code", "sP", None).unwrap();
+    assert_eq!(pane_of(&store, "sP"), Some(7));
+
+    // A pane learned after the first bind lands on the existing binding.
+    store.bind_session(&g.id, "claude-code", "sQ", None).unwrap();
+    assert_eq!(pane_of(&store, "sQ"), None);
+    store.bind_session(&g.id, "claude-code", "sQ", Some(9)).unwrap();
+    assert_eq!(pane_of(&store, "sQ"), Some(9));
+
+    // Durable across a reload…
+    drop(store);
+    let store = Store::open(&dir).unwrap();
+    assert_eq!(pane_of(&store, "sP"), Some(7));
+
+    // …and a goal file written before panes existed still loads.
+    std::fs::write(
+        dir.join("g-old.json"),
+        r#"{"id":"g-old","title":"older than panes","status":"running",
+            "contract_version":0,"agent_synced_version":0,
+            "sessions":[{"agent":"claude-code","session_id":"s1","bound_at":1}],
+            "items":[],"evidence":[],"events":[],"created_at":1}"#,
+    )
+    .unwrap();
+    drop(store);
+    let store = Store::open(&dir).unwrap();
+    let old = store.get_goal("g-old").expect("legacy goal must load");
+    assert_eq!(old.sessions[0].pane, None);
 }
 
 #[test]
 fn end_turn_accounts_only_running_goals_and_the_gate_revives() {
     let (store, _dir) = temp_store();
     let (g, _) = store
-        .create_auto_goal("mid-run clear", "/proj", "sE", "claude-code")
+        .create_auto_goal("mid-run clear", "/proj", "sE", "claude-code", None)
         .unwrap();
 
     // Session ended mid-run → honest accounting.

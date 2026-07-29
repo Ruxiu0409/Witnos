@@ -38,36 +38,41 @@ export function saveLang(lang: Lang) {
   localStorage.setItem(LS_KEY, lang);
 }
 
+// No `ruled`: it left the domain with approval (a delivered goal now simply
+// stays `awaiting_rulings`), and the core aliases the stored value onto that as
+// it reads an older goal, so it never reaches the UI. `awaiting_rulings` is
+// labelled for what actually happened — the agent laid its evidence — because
+// nothing is in fact waiting on a verdict.
 const GOAL_STATUS_EN: Record<string, string> = {
   running: "running",
-  awaiting_rulings: "awaiting rulings",
-  ruled: "all ruled",
+  awaiting_rulings: "evidence laid",
   turn_ended_unmet: "turn ended unmet",
   closed: "closed",
 };
 
 const GOAL_STATUS_ZH: Record<string, string> = {
   running: "執行中",
-  awaiting_rulings: "等待裁決",
-  ruled: "已全數裁決",
+  awaiting_rulings: "已擺出證據",
   turn_ended_unmet: "回合結束（條件未達）",
   closed: "已關閉",
 };
 
+// No `approved` either, for the same reason; App.tsx folds it too, since the
+// status string drives filters and CSS classes and not just this label.
 const ITEM_STATUS_EN: Record<string, string> = {
   open: "open",
-  laid: "awaiting your ruling",
+  laid: "evidence laid",
   passed: "passed (oracle)",
-  approved: "approved by you",
-  rejected: "rejected by you",
+  rejected: "sent back",
+  waived: "waived",
 };
 
 const ITEM_STATUS_ZH: Record<string, string> = {
   open: "待驗證",
-  laid: "等待你的裁決",
+  laid: "已擺出證據",
   passed: "已通過（oracle）",
-  approved: "你已核可",
-  rejected: "你已駁回",
+  rejected: "已退回",
+  waived: "已豁免",
 };
 
 const ITEM_CLASS_EN: Record<string, string> = {
@@ -138,7 +143,7 @@ const en = {
     "Hooks installed. Make sure Claude Code trusts this folder (new hooks may need /hooks approval). Every new agent session here gets its own goal from its first prompt.",
   projectNotWatched: "not auto-watched",
   noProjectHeading: "no project",
-  needsRulingDot: "awaiting your ruling",
+  needsRulingDot: "new evidence for you to look at",
   projectHint:
     "Open the terminal, run your agent (e.g. `claude`), and type a task — each new session gets its own goal, watchable here.",
   restartHere: "restart shell here",
@@ -152,7 +157,22 @@ const en = {
   closedBanner:
     "This goal is closed — no agent reads this contract anymore. To change the outcome, re-issue the goal.",
   needsBanner: (n: number) =>
-    `${n} subjective item${n > 1 ? "s" : ""} await your ruling — the agent lays evidence and moves on; it is not waiting for you.`,
+    `${n} subjective item${n > 1 ? "s" : ""} laid evidence for you to look at. The agent moved on and is not waiting — if you disagree, edit the item or send it back.`,
+
+  // sending the change into the agent's own shell (Witnos owns that terminal,
+  // so a correction can run now instead of waiting for the agent's next stop).
+  // Only YOUR edits raise this — the agent bumps the version itself all run
+  // long, and a banner that fired on its own bookkeeping would be pure noise.
+  unsyncedBanner: (seen: number, now: number) =>
+    `Your change hasn't reached the agent yet — it last read v${seen}, your contract is v${now}. Its next stop is blocked until it reads the change and reconciles — or reach it now:`,
+  sendToAgent: "send it to the agent now",
+  sentToAgent: "Sent — typed into the agent's terminal, so it has your change.",
+  agentWorking:
+    "The agent is working, so it was left alone — and it needs no typing: your change is injected into its own conversation after its next tool call.",
+  agentNotRunning:
+    "That terminal is sitting at a shell prompt — no agent to type into, and prose typed at a shell would just run as a command. Nothing was sent; your change stays in this contract.",
+  agentUnbound:
+    "No live terminal for this goal's session — a /clear or a closed pane starts a new session, and a new session gets its own goal (that is the design). Your change stays in this contract.",
 
   // items
   itemClass: (k: string) => ITEM_CLASS_EN[k] ?? k,
@@ -170,8 +190,16 @@ const en = {
   stale: "stale",
   staleTitle: "The criterion was edited after this evidence was captured.",
   provTitle: "open the original (recorded as a drill-down)",
-  approve: "approve",
-  reject: "reject",
+  rulingNote:
+    "not waiting for you — edit it or send it back to reach the agent (that blocks its next stop)",
+  sendItBack: "send it back",
+  sendItBackTitle:
+    "Keeps the criterion, tells the agent its evidence doesn't pass. Bumps the contract version, so a running agent hears it too.",
+  waive: "don't check this",
+  waiveTitle:
+    "Waive this item: nobody checks it. The agent is no longer asked for evidence, and the gate ignores it.",
+  unwaive: "check this again",
+  waivedNote: "waived — nobody checks this one.",
 
   // add item
   addItemHeading: "add a verification item",
@@ -236,7 +264,7 @@ const zhHant: Messages = {
     "Hooks 已裝好。請確認 Claude Code 信任這個資料夾（新 hooks 可能需要在 /hooks 核准）。之後在這裡的每個新 agent session，第一個 prompt 會自動建立各自的目標。",
   projectNotWatched: "未自動監看",
   noProjectHeading: "未綁定專案",
-  needsRulingDot: "等你裁決",
+  needsRulingDot: "有新證據等你看",
   projectHint:
     "打開終端機、啟動你的 agent（例如 `claude`）、輸入任務——每個新 session 會自動建立自己的目標，在這裡即時監看。",
   restartHere: "在此重啟 shell",
@@ -252,7 +280,22 @@ const zhHant: Messages = {
   closedBanner:
     "此目標已關閉——不會再有代理讀取這份契約。要改變結果，請重新發布這個目標。",
   needsBanner: (n) =>
-    `${n} 個主觀項目等待你的裁決——代理擺出證據後就繼續前進，不會停下來等你。`,
+    `${n} 個主觀項目擺好了證據等你看。代理擺完就繼續前進，不會等你——你不同意的話，就編輯這個項目或把它退回。`,
+
+  // sending the change into the agent's own shell (Witnos owns that terminal,
+  // so a correction can run now instead of waiting for the agent's next stop).
+  // Only YOUR edits raise this — the agent bumps the version itself all run
+  // long, and a banner that fired on its own bookkeeping would be pure noise.
+  unsyncedBanner: (seen, now) =>
+    `你的修改還沒傳到代理手上——它最後讀到的是 v${seen}，你的契約已經是 v${now}。它下次想停下時會被攔住，直到它讀完變更並完成 reconcile——或者現在就送過去：`,
+  sendToAgent: "立刻送到代理",
+  sentToAgent: "已送出——已打進代理的終端機，它拿到你的修改了。",
+  agentWorking:
+    "代理正在工作，所以沒有打斷它——而且根本不用打字：你的修改會在它下一次呼叫工具之後，直接注入它的對話裡。",
+  agentNotRunning:
+    "那個終端機停在 shell 提示符——沒有代理可以打字進去，而在 shell 打一段話只會被當成指令執行。所以什麼都沒送出；你的修改留在這份契約裡。",
+  agentUnbound:
+    "這個目標的 session 沒有還活著的終端機——/clear 或關掉終端機都會開始新的 session，而新的 session 會有自己的目標（這是設計如此）。你的修改會留在這份契約裡。",
 
   // items
   itemClass: (k) => ITEM_CLASS_ZH[k] ?? k,
@@ -269,8 +312,16 @@ const zhHant: Messages = {
   stale: "過時",
   staleTitle: "這項驗收條件在證據擷取之後被修改過。",
   provTitle: "開啟原始出處（會記錄為一次下鑽）",
-  approve: "核可",
-  reject: "駁回",
+  rulingNote:
+    "代理不會等你裁決——編輯這個項目或把它退回，都會傳到它那邊，並攔住它下一次想停下。",
+  sendItBack: "退回給代理",
+  sendItBackTitle:
+    "保留這項條件，但告訴代理它的證據不算通過。會推進契約版本，所以執行中的代理也收得到。",
+  waive: "不檢查這項",
+  waiveTitle:
+    "豁免這一項：沒有人會檢查它。不再要求代理提供證據，gate 也會忽略它。",
+  unwaive: "恢復檢查",
+  waivedNote: "已豁免——沒有人會檢查這一項。",
 
   // add item
   addItemHeading: "新增驗證項目",

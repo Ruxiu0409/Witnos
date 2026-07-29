@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as api from "./api";
-import TerminalPanel from "./TerminalPanel";
+import TerminalPanel, { type ActivityProbe } from "./TerminalPanel";
 import ResizeHandle, { type WidthSpec } from "./ResizeHandle";
 import Picker from "./Picker";
 import { LANGS, detectLang, messages, saveLang, type Lang } from "./i18n";
@@ -26,6 +26,15 @@ import "./App.css";
 
 function short(id: string): string {
   return id.slice(0, 8);
+}
+
+// Approval left the domain (it was mechanically inert — the gate treated
+// "laid" and "approved" identically). The core already aliases the stored
+// `approved` onto `laid` as it reads a goal, so this is the belt to that
+// braces: the status string also becomes a CSS class and a filter key here, and
+// an unknown one must not fan out into three silently wrong renderings.
+function itemStatus(status: string): string {
+  return status === "approved" ? "laid" : status;
 }
 
 // Only macOS gets the overlaid title bar (tauri's titleBarStyle is macOS-only),
@@ -57,6 +66,17 @@ function basename(dir: string): string {
       .replace(/[\\/]+$/, "")
       .split(/[\\/]/)
       .pop() || dir
+  );
+}
+
+// The terminal a correction would go to: the newest session that recorded one
+// (after a resume a goal can carry several, and the live one is the last we
+// heard from). Deliberately the same pick send_to_agent makes on the Rust side —
+// asking about one pane and typing into another would be worse than not asking.
+function livePane(goal: api.Goal): number | null {
+  return goal.sessions.reduce<number | null>(
+    (found, s) => s.pane ?? found,
+    null,
   );
 }
 
@@ -112,6 +132,14 @@ export default function App() {
     label: string;
     action: () => void;
   } | null>(null);
+
+  // Asked once, at click time (see pushToAgent), never during render: a working
+  // agent retitles its pane constantly, and none of that belongs in this tree's
+  // render path. Null whenever the terminal panel is unmounted.
+  const paneActivity = useRef<ActivityProbe | null>(null);
+  const bindActivity = useCallback((probe: ActivityProbe | null) => {
+    paneActivity.current = probe;
+  }, []);
 
   // Which evidence the user is looking at right now — the honest source of
   // the origin instrumentation (the strong-bet (b) signal).
@@ -313,7 +341,7 @@ export default function App() {
     meta?: string,
   ) => {
     const folded = collapsedDirs.has(dir);
-    // A folded group must not swallow the "awaiting your ruling" signal
+    // A folded group must not swallow the "there is new evidence" signal
     // (principle 6): the dot climbs up to the project row.
     const needsDot =
       folded && dirGoals.some((g) => g.status === "awaiting_rulings");
@@ -374,10 +402,61 @@ export default function App() {
     refresh();
   };
 
-  const rule = async (item: api.Item, approve: boolean) => {
+  // The two ways to disagree. Both bump the contract version, so both reach a
+  // running agent through the delivery channel — and a failure has to say so,
+  // otherwise the click just looks like it did nothing.
+  const sendItemBack = async (item: api.Item) => {
     if (!goal) return;
-    await api.ruleItem(goal.id, item.id, approve, drilled.current.has(item.id));
-    refresh();
+    try {
+      await api.rejectItem(goal.id, item.id, drilled.current.has(item.id));
+      refresh();
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+
+  const setWaived = async (item: api.Item, waived: boolean) => {
+    if (!goal) return;
+    try {
+      await api.waiveItem(goal.id, item.id, waived);
+      refresh();
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+
+  // Witnos owns the terminal the agent runs in, so the change can be typed into
+  // that pane and run now, instead of waiting for the gate to catch it at the
+  // agent's next stop. No note: the core composes the version line and the
+  // commands, and `note` is reserved for the human's own words — there is no
+  // field for them yet, and inventing prose on their behalf would only push the
+  // mechanics further down the line the agent reads. All three outcomes are
+  // reported, because two of them mean nothing was typed and the human must not
+  // read that as delivered.
+  const pushToAgent = async () => {
+    if (!goal) return;
+    // The politeness the core can't do: it only sees whether *something* owns
+    // the pane, not whether that something is mid-thought. Interrupting a
+    // working agent buys nothing anyway — the delivery channel injects the
+    // delta after its next tool call, with no typing at all. Idle or unreadable
+    // (see PaneActivity) both fall through and send.
+    const pane = livePane(goal);
+    if (pane !== null && paneActivity.current?.(pane) === "working") {
+      setNotice(t.agentWorking);
+      return;
+    }
+    try {
+      const outcome = await api.sendToAgent(goal.id);
+      setNotice(
+        outcome === "sent"
+          ? t.sentToAgent
+          : outcome === "no_agent"
+            ? t.agentNotRunning
+            : t.agentUnbound,
+      );
+    } catch (e) {
+      setErr(String(e));
+    }
   };
 
   const drill = async (item: api.Item, ev: api.Evidence, ptr: api.Pointer) => {
@@ -449,9 +528,19 @@ export default function App() {
     .sort();
   const needsYou = goal
     ? goal.items.filter(
-        (i) => i.class.kind === "subjective" && i.status === "laid",
+        (i) => i.class.kind === "subjective" && itemStatus(i.status) === "laid",
       )
     : [];
+  // An edit of the human's own that the agent hasn't read. Not `contract_version`:
+  // the agent bumps that itself every time it lays items, before it reconciles,
+  // so keying on it made the banner appear during ordinary mid-run work — noise
+  // by principle 4, and noise that cries wolf about the one thing the banner
+  // exists to say. The gate catches these at the agent's next stop anyway; this
+  // is only what makes the "or reach it now" offer appear.
+  const unsynced =
+    !!goal &&
+    goal.status !== "closed" &&
+    goal.last_human_edit_version > goal.agent_synced_version;
 
   const originNote = viewing
     ? t.originViewing(short(viewing))
@@ -792,6 +881,7 @@ export default function App() {
           cwd={selProject ?? goal?.project_dir ?? null}
           t={t}
           appearance={appearance}
+          bindActivity={bindActivity}
           hidden={workspaceView !== "terminal"}
         />
         {workspaceView === "settings" && (
@@ -919,6 +1009,21 @@ export default function App() {
                       {t.needsBanner(needsYou.length)}
                     </div>
                   )}
+                  {/* The gap it reports is the one the agent has to close —
+                      the whole contract, not just the human's last edit — which
+                      is why these two numbers aren't the pair `unsynced` tested;
+                      they match what the typed nudge tells the agent to run. */}
+                  {unsynced && (
+                    <div className="banner unsynced">
+                      <span>
+                        {t.unsyncedBanner(
+                          goal.agent_synced_version,
+                          goal.contract_version,
+                        )}
+                      </span>
+                      <button onClick={pushToAgent}>{t.sendToAgent}</button>
+                    </div>
+                  )}
 
                   <section className="items">
                     {goal.items.map((item) => {
@@ -927,12 +1032,13 @@ export default function App() {
                       );
                       const reinterpreted =
                         item.interpretation_history.length > 1;
+                      const st = itemStatus(item.status);
+                      const waived = st === "waived";
                       return (
                         <article
                           key={item.id}
-                          className={`item ${
-                            item.status === "laid" &&
-                            item.class.kind === "subjective"
+                          className={`item ${waived ? "waived" : ""} ${
+                            st === "laid" && item.class.kind === "subjective"
                               ? "attention"
                               : ""
                           }`}
@@ -941,8 +1047,8 @@ export default function App() {
                             <span className={`chip ${item.class.kind}`}>
                               {t.itemClass(item.class.kind)}
                             </span>
-                            <span className={`chip status-${item.status}`}>
-                              {t.itemStatus(item.status)}
+                            <span className={`chip status-${st}`}>
+                              {t.itemStatus(st)}
                             </span>
                             {reinterpreted && (
                               <span
@@ -963,19 +1069,39 @@ export default function App() {
                               {t.originKind(item.origin.kind)}
                             </span>
                             <span className="spacer" />
+                            {/* A waived item offers only the way back: editing
+                                a criterion nobody checks is busywork. */}
                             {goal.status !== "closed" &&
-                              editing !== item.id && (
+                              editing !== item.id &&
+                              (waived ? (
                                 <button
                                   className="ghost"
-                                  onClick={() => {
-                                    setEditing(item.id);
-                                    setEditClaim(item.claim);
-                                    setEditCheck(item.check);
-                                  }}
+                                  onClick={() => setWaived(item, false)}
                                 >
-                                  {t.edit}
+                                  {t.unwaive}
                                 </button>
-                              )}
+                              ) : (
+                                <>
+                                  <button
+                                    className="ghost"
+                                    onClick={() => {
+                                      setEditing(item.id);
+                                      setEditClaim(item.claim);
+                                      setEditCheck(item.check);
+                                    }}
+                                  >
+                                    {t.edit}
+                                  </button>
+                                  <button
+                                    className="ghost icon"
+                                    title={t.waiveTitle}
+                                    aria-label={t.waive}
+                                    onClick={() => setWaived(item, true)}
+                                  >
+                                    ✕
+                                  </button>
+                                </>
+                              ))}
                           </div>
 
                           {editing === item.id ? (
@@ -1068,26 +1194,29 @@ export default function App() {
                             );
                           })}
 
+                          {/* No approve button: the agent's work is presumed
+                              correct, so the human only acts on disagreement —
+                              and the note has to say the agent isn't waiting,
+                              or the row reads as a verdict being demanded. */}
                           {item.class.kind === "subjective" &&
-                            ["laid", "approved", "rejected"].includes(
-                              item.status,
-                            ) &&
+                            ["laid", "rejected"].includes(st) &&
                             goal.status !== "closed" && (
                               <div className="ruling">
+                                <span className="ruling-note">
+                                  {t.rulingNote}
+                                </span>
                                 <button
-                                  className={`approve ${item.status === "approved" ? "active" : ""}`}
-                                  onClick={() => rule(item, true)}
+                                  className={`reject ${st === "rejected" ? "active" : ""}`}
+                                  title={t.sendItBackTitle}
+                                  onClick={() => sendItemBack(item)}
                                 >
-                                  ✓ {t.approve}
-                                </button>
-                                <button
-                                  className={`reject ${item.status === "rejected" ? "active" : ""}`}
-                                  onClick={() => rule(item, false)}
-                                >
-                                  ✗ {t.reject}
+                                  ✗ {t.sendItBack}
                                 </button>
                               </div>
                             )}
+                          {waived && (
+                            <div className="waived-note">{t.waivedNote}</div>
+                          )}
                         </article>
                       );
                     })}

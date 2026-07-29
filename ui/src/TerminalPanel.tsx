@@ -57,7 +57,35 @@ function terminalTheme(appearance: Appearance): ITheme {
 // action both refuse to go below it rather than produce unusable slivers.
 const MIN_PANE_PX = 84;
 
+/** What the program in a pane is doing, as far as its title lets us tell.
+ *  `unknown` is a first-class answer, not a failure: whoever asks must treat it
+ *  as "go ahead", never as a reason to withhold something from the agent. */
+export type PaneActivity = "working" | "idle" | "unknown";
+
+/** Ask by shell id — the id the core knows a pane by (WITNOS_PANE, and the
+ *  `pane` recorded on a goal's session), not the React-side pane key. */
+export type ActivityProbe = (shellId: number) => PaneActivity;
+
+// Claude Code publishes its own state in the title it sets: "✳ …" while it is
+// working, "· Claude Code" when it is waiting on you. Read it as a hint only —
+// another agent, a shell with its own title, or a future Claude Code that
+// renames these all land on `unknown`, which must degrade to "go ahead" rather
+// than silently swallow what the human wanted to send.
+const WORKING_MARK = "✳";
+const IDLE_MARK = "·";
+
+function activityFromTitle(title: string | null): PaneActivity {
+  if (!title) return "unknown";
+  if (title.startsWith(WORKING_MARK)) return "working";
+  if (title.startsWith(IDLE_MARK)) return "idle";
+  return "unknown";
+}
+
 type PaneApi = {
+  /** The id the shell was spawned under — this pane's identity to the core.
+   *  It is minted per mount inside the view, so it travels up from there
+   *  instead of being hoisted: a restart must get a fresh one. */
+  shellId: number;
   focus: () => void;
   /** Move this shell to `dir`; resolves false if it was busy (nothing sent). */
   tryCd: (dir: string) => Promise<boolean>;
@@ -153,6 +181,7 @@ function TerminalView({
     termRef.current = term;
     fitRef.current = fit;
     bindApi(paneKey, {
+      shellId: id,
       focus: () => term.focus(),
       tryCd: (dir) => invoke<boolean>("term_try_cd", { id, dir }),
     });
@@ -247,11 +276,17 @@ export default function TerminalPanel({
   cwd,
   t,
   appearance,
+  bindActivity,
   hidden = false,
 }: {
   cwd: string | null;
   t: Messages;
   appearance: Appearance;
+  // Hands the panel's "what is that pane doing" lookup to the owner, the way
+  // TerminalView hands up its PaneApi. A probe rather than state on purpose:
+  // an agent retitles its pane every few seconds while it works, and none of
+  // that should re-render anything outside this panel.
+  bindActivity: (probe: ActivityProbe | null) => void;
   // Hide instead of unmount: the shells must survive workspace view switches.
   hidden?: boolean;
 }) {
@@ -283,6 +318,25 @@ export default function TerminalPanel({
       prev.map((p) => (p.key === key ? { ...p, ...part } : p)),
     );
   }, []);
+
+  // Answered from the title this panel already tracks, at the moment someone
+  // asks (see App's send-to-agent), off the same refs the keyboard handlers
+  // read — so the answer is current without this being a dependency of
+  // anything. A pane whose shell died reports `unknown` rather than whatever
+  // its last title said: the title is frozen at the moment of death, and the
+  // core will answer "unbound" for that id anyway.
+  const activity = useCallback<ActivityProbe>((shellId) => {
+    const pane = panesRef.current.find(
+      (p) => apis.current.get(p.key)?.shellId === shellId,
+    );
+    if (!pane || pane.exited) return "unknown";
+    return activityFromTitle(pane.title);
+  }, []);
+
+  useEffect(() => {
+    bindActivity(activity);
+    return () => bindActivity(null);
+  }, [bindActivity, activity]);
 
   // A new pane opens in the selected project's directory — the same rule the
   // first pane and "restart here" already follow — falling back to where the
