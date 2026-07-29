@@ -463,6 +463,7 @@ fn main() {
             terminal::term_spawn,
             terminal::term_write,
             terminal::term_resize,
+            terminal::term_try_cd,
             terminal::term_kill
         ])
         .build(tauri::generate_context!())

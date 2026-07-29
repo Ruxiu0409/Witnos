@@ -57,7 +57,11 @@ function terminalTheme(appearance: Appearance): ITheme {
 // action both refuse to go below it rather than produce unusable slivers.
 const MIN_PANE_PX = 84;
 
-type PaneApi = { focus: () => void };
+type PaneApi = {
+  focus: () => void;
+  /** Move this shell to `dir`; resolves false if it was busy (nothing sent). */
+  tryCd: (dir: string) => Promise<boolean>;
+};
 
 type Pane = {
   key: number;
@@ -148,7 +152,10 @@ function TerminalView({
     fit.fit();
     termRef.current = term;
     fitRef.current = fit;
-    bindApi(paneKey, { focus: () => term.focus() });
+    bindApi(paneKey, {
+      focus: () => term.focus(),
+      tryCd: (dir) => invoke<boolean>("term_try_cd", { id, dir }),
+    });
 
     let alive = true;
     invoke("term_spawn", { id, cols: term.cols, rows: term.rows, cwd }).catch(
@@ -357,6 +364,34 @@ export default function TerminalPanel({
     },
     [cwd],
   );
+
+  // Picking a project in the sidebar walks the shell you're typing in over to
+  // it — the same `cd` you'd type, so the pane keeps its scrollback and its
+  // process. Only the focused pane moves: panes are separate workspaces, and
+  // a stack deliberately spread across directories shouldn't collapse onto one
+  // click. A pane that's running something is left strictly alone (term_try_cd
+  // refuses rather than typing into an agent); the header's "restart here"
+  // button stays as the deliberate way in.
+  const targeted = useRef(cwd);
+  useEffect(() => {
+    if (cwd === null || cwd === targeted.current) return;
+    targeted.current = cwd;
+    const key = focusedRef.current;
+    const pane = panesRef.current.find((p) => p.key === key);
+    if (!pane || (pane.liveCwd ?? pane.cwd) === cwd) return;
+    if (pane.exited) {
+      restart(key); // dead shell: nothing to preserve, reopen it in the new dir
+      return;
+    }
+    apis.current
+      .get(key)
+      ?.tryCd(cwd)
+      // The shell is where we just sent it; shells that report cwd (OSC 7)
+      // will confirm it a moment later, the rest would otherwise keep showing
+      // the directory they were spawned in.
+      .then((moved) => moved && patch(key, { cwd, liveCwd: null }))
+      .catch(() => {});
+  }, [cwd, restart, patch]);
 
   useEffect(() => {
     if (hidden) return;
