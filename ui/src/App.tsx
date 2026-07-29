@@ -3,13 +3,23 @@ import type { CSSProperties, MouseEvent } from "react";
 import * as api from "./api";
 import TerminalPanel from "./TerminalPanel";
 import ResizeHandle, { type WidthSpec } from "./ResizeHandle";
-import LangPicker from "./LangPicker";
-import { detectLang, messages, saveLang, type Lang } from "./i18n";
+import Picker from "./Picker";
+import { LANGS, detectLang, messages, saveLang, type Lang } from "./i18n";
+import {
+  EDITOR_NAMES,
+  detectEditor,
+  saveEditor,
+  type Editor,
+} from "./editors";
 import "./App.css";
 
 function short(id: string): string {
   return id.slice(0, 8);
 }
+
+// Only macOS gets the overlaid title bar (tauri's titleBarStyle is macOS-only),
+// so only there must the strip leave room for the traffic lights.
+const IS_MAC = /Mac/i.test(navigator.userAgent);
 
 const SIDEBAR_W: WidthSpec = { def: 280, min: 180, max: 480 };
 const DETAIL_W: WidthSpec = { def: 440, min: 300, max: 720 };
@@ -67,6 +77,7 @@ export default function App() {
   );
   const [showArchive, setShowArchive] = useState(false);
   const [lang, setLang] = useState<Lang>(detectLang);
+  const [editor, setEditor] = useState<Editor>(detectEditor);
   const t = messages[lang];
   const [menu, setMenu] = useState<{
     x: number;
@@ -130,6 +141,11 @@ export default function App() {
   const changeLang = (l: Lang) => {
     saveLang(l);
     setLang(l);
+  };
+
+  const changeEditor = (e: Editor) => {
+    saveEditor(e);
+    setEditor(e);
   };
 
   const selectGoal = (id: string) => {
@@ -299,7 +315,13 @@ export default function App() {
     if (!goal) return;
     drilled.current.add(item.id);
     setViewing(ev.id);
-    await api.drillDown(goal.id, ev.id, ptr);
+    try {
+      await api.drillDown(goal.id, ev.id, ptr, editor);
+    } catch (e) {
+      // An unresolvable pointer must say so — silently opening nothing is how
+      // a human ends up ruling on evidence they never actually saw.
+      setErr(String(e));
+    }
   };
 
   const toggleSidebar = useCallback(() => {
@@ -323,7 +345,9 @@ export default function App() {
       if (k === "s") {
         e.preventDefault();
         toggleSidebar();
-      } else if (k === "d") {
+      } else if (k === "i") {
+        // ⌘I, not ⌘D: the terminal owns ⌘D (split a shell downwards), the
+        // one shortcut a terminal user reaches for without thinking.
         e.preventDefault();
         toggleDetail();
       }
@@ -368,7 +392,7 @@ export default function App() {
 
   return (
     <div
-      className={`app ${resizing ? "resizing" : ""}`}
+      className={`app ${IS_MAC ? "mac" : ""} ${resizing ? "resizing" : ""}`}
       style={
         {
           "--sidebar-w": `${sidebarW}px`,
@@ -376,24 +400,62 @@ export default function App() {
         } as CSSProperties
       }
     >
-      <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
-        <header>
-          <div className="sidebar-title">
-            <h1>witnos</h1>
-            <div className="watching">
-              {watchingCount > 0
-                ? t.watchingCount(watchingCount)
-                : t.watchingNone}
-            </div>
-          </div>
-          <button
-            className="sidebar-toggle"
-            onClick={toggleSidebar}
-            aria-label={collapsed ? t.expandSidebar : t.collapseSidebar}
-            aria-expanded={!collapsed}
-            aria-keyshortcuts="Meta+S"
+      {/* The window's title bar is overlaid on the webview, so the pane
+          toggles live up here beside the traffic lights. Bare
+          data-tauri-drag-region: only clicks on the strip itself drag the
+          window — the buttons inside keep their clicks. */}
+      <div className="titlebar" data-tauri-drag-region>
+        <button
+          className="sidebar-toggle"
+          onClick={toggleSidebar}
+          aria-label={collapsed ? t.expandSidebar : t.collapseSidebar}
+          aria-expanded={!collapsed}
+          aria-keyshortcuts="Meta+S"
+        >
+          {/* sidebar.left in the SF Symbols style; pane filled = sidebar shown */}
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            aria-hidden="true"
           >
-            {/* sidebar.left in the SF Symbols style; pane filled = sidebar shown */}
+            <rect
+              x="1.6"
+              y="2.6"
+              width="12.8"
+              height="10.8"
+              rx="2.2"
+              stroke="currentColor"
+              strokeWidth="1.2"
+            />
+            <path d="M6.2 2.6v10.8" stroke="currentColor" strokeWidth="1.2" />
+            {!collapsed && (
+              <rect
+                x="2.9"
+                y="3.9"
+                width="2.2"
+                height="8.2"
+                rx="0.9"
+                fill="currentColor"
+                opacity="0.55"
+              />
+            )}
+          </svg>
+          <span className="toggle-tip" aria-hidden="true">
+            {collapsed ? t.expandSidebar : t.collapseSidebar}
+            <kbd>⌘S</kbd>
+          </span>
+        </button>
+        {workspaceView !== "settings" && (
+          <button
+            className="detail-toggle"
+            onClick={toggleDetail}
+            aria-label={detailCollapsed ? t.expandDetail : t.collapseDetail}
+            aria-expanded={!detailCollapsed}
+            aria-keyshortcuts="Meta+I"
+          >
+            {/* sidebar.right in the SF Symbols style; pane filled = detail shown */}
             <svg
               width="16"
               height="16"
@@ -410,10 +472,10 @@ export default function App() {
                 stroke="currentColor"
                 strokeWidth="1.2"
               />
-              <path d="M6.2 2.6v10.8" stroke="currentColor" strokeWidth="1.2" />
-              {!collapsed && (
+              <path d="M9.8 2.6v10.8" stroke="currentColor" strokeWidth="1.2" />
+              {!detailCollapsed && (
                 <rect
-                  x="2.9"
+                  x="10.9"
                   y="3.9"
                   width="2.2"
                   height="8.2"
@@ -424,10 +486,23 @@ export default function App() {
               )}
             </svg>
             <span className="toggle-tip" aria-hidden="true">
-              {collapsed ? t.expandSidebar : t.collapseSidebar}
-              <kbd>⌘S</kbd>
+              {detailCollapsed ? t.expandDetail : t.collapseDetail}
+              <kbd>⌘I</kbd>
             </span>
           </button>
+        )}
+      </div>
+
+      <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
+        <header>
+          <div className="sidebar-title">
+            <h1>witnos</h1>
+            <div className="watching">
+              {watchingCount > 0
+                ? t.watchingCount(watchingCount)
+                : t.watchingNone}
+            </div>
+          </div>
         </header>
         {collapsed && watchingCount > 0 && (
           <div className="rail-watching" title={t.watchingCount(watchingCount)}>
@@ -437,9 +512,33 @@ export default function App() {
         <div className="goal-list">
           {!showArchive && (
             <div className="proj-section">
-              {(projects.length > 0 || extraDirs.length > 0) && (
-                <div className="archive-head">{t.projectsHeading}</div>
-              )}
+              {/* The add affordance lives in the heading (shown on hover,
+                  ChatGPT-style), so the heading renders even with zero
+                  projects — otherwise the first one couldn't be added. */}
+              <div className="archive-head proj-head">
+                <span>{t.projectsHeading}</span>
+                <button
+                  className="proj-add"
+                  onClick={watchProject}
+                  title={t.watchProjectAuto}
+                  aria-label={t.watchProjectAuto}
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 14 14"
+                    fill="none"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M7 2.5v9M2.5 7h9"
+                      stroke="currentColor"
+                      strokeWidth="1.4"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </button>
+              </div>
               {projects.map((p) =>
                 projGroup(p.dir, goalsByDir.get(p.dir) ?? [], (e) => {
                   e.preventDefault();
@@ -450,9 +549,6 @@ export default function App() {
               {extraDirs.map((dir) =>
                 projGroup(dir, goalsByDir.get(dir)!, undefined, t.projectNotWatched),
               )}
-              <button className="ghost watch-project" onClick={watchProject}>
-                {t.watchProjectAuto}
-              </button>
             </div>
           )}
           {!showArchive && noDirGoals.length > 0 && (
@@ -621,7 +717,36 @@ export default function App() {
             <div className="settings-body">
               <div className="setting-row">
                 <span>{t.language}</span>
-                <LangPicker lang={lang} onChange={changeLang} t={t} />
+                <Picker
+                  value={lang}
+                  onChange={changeLang}
+                  searchPlaceholder={t.searchLanguage}
+                  noMatchesLabel={t.noMatches}
+                  options={LANGS.map((l) => ({
+                    value: l.value,
+                    primary: l.native,
+                    secondary:
+                      l.names[lang] !== l.native ? l.names[lang] : undefined,
+                    keywords: Object.values(l.names),
+                  }))}
+                />
+              </div>
+              <div className="setting-row">
+                <div className="setting-label">
+                  <span>{t.openFilesWith}</span>
+                  <span className="setting-hint">{t.openFilesWithHint}</span>
+                </div>
+                <Picker
+                  value={editor}
+                  onChange={changeEditor}
+                  options={[
+                    { value: "system" as Editor, primary: t.editorSystem },
+                    ...EDITOR_NAMES.map(([value, primary]) => ({
+                      value,
+                      primary,
+                    })),
+                  ]}
+                />
               </div>
             </div>
           </section>
@@ -642,54 +767,6 @@ export default function App() {
             />
           )}
           <aside className={`detail ${detailCollapsed ? "collapsed" : ""}`}>
-            <div className="detail-head">
-              <button
-                className="detail-toggle"
-                onClick={toggleDetail}
-                aria-label={detailCollapsed ? t.expandDetail : t.collapseDetail}
-                aria-expanded={!detailCollapsed}
-                aria-keyshortcuts="Meta+D"
-              >
-                {/* sidebar.right in the SF Symbols style; pane filled = detail shown */}
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  aria-hidden="true"
-                >
-                  <rect
-                    x="1.6"
-                    y="2.6"
-                    width="12.8"
-                    height="10.8"
-                    rx="2.2"
-                    stroke="currentColor"
-                    strokeWidth="1.2"
-                  />
-                  <path
-                    d="M9.8 2.6v10.8"
-                    stroke="currentColor"
-                    strokeWidth="1.2"
-                  />
-                  {!detailCollapsed && (
-                    <rect
-                      x="10.9"
-                      y="3.9"
-                      width="2.2"
-                      height="8.2"
-                      rx="0.9"
-                      fill="currentColor"
-                      opacity="0.55"
-                    />
-                  )}
-                </svg>
-                <span className="toggle-tip" aria-hidden="true">
-                  {detailCollapsed ? t.expandDetail : t.collapseDetail}
-                  <kbd>⌘D</kbd>
-                </span>
-              </button>
-            </div>
             {detailCollapsed && needsYou.length > 0 && (
               <div
                 className="rail-watching"

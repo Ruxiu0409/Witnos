@@ -99,6 +99,9 @@ const en = {
   resizeSidebar: "resize sidebar (double-click to reset)",
   resizeDetail: "resize detail pane (double-click to reset)",
   terminal: "terminal",
+  splitBelow: "open another terminal below (⌘D)",
+  closePane: "close this terminal",
+  resizePanes: "drag to resize (double-click to even out)",
   restartShell: "restart shell",
   shellExited: "[shell exited]",
   shellStartFailed: (e: string) => `failed to start shell: ${e}`,
@@ -107,6 +110,10 @@ const en = {
   language: "Language",
   searchLanguage: "search languages…",
   noMatches: "no matches",
+  openFilesWith: "Open files with",
+  openFilesWithHint:
+    "Evidence file pointers open here (with the line when known); links still open in the browser.",
+  editorSystem: "system default",
   archive: "archive",
   showArchive: "show archived goals",
   hideArchive: "back to active goals",
@@ -120,7 +127,7 @@ const en = {
 
   // projects (sidebar grouping)
   projectsHeading: "projects",
-  watchProjectAuto: "＋ watch a project (auto)",
+  watchProjectAuto: "watch a project (auto)",
   removeProject: "stop watching",
   confirmRemoveProject: (dir: string) =>
     `Stop auto-watching "${dir}"? Its session goals stop gating; the goals and their evidence stay.`,
@@ -189,6 +196,9 @@ const zhHant: Messages = {
   resizeSidebar: "調整側欄寬度（雙擊還原預設）",
   resizeDetail: "調整詳情欄寬度（雙擊還原預設）",
   terminal: "終端機",
+  splitBelow: "在下方開另一個終端機（⌘D）",
+  closePane: "關閉這個終端機",
+  resizePanes: "拖曳調整高度（雙擊平均分配）",
   restartShell: "重啟 shell",
   shellExited: "[shell 已結束]",
   shellStartFailed: (e) => `shell 啟動失敗：${e}`,
@@ -197,6 +207,10 @@ const zhHant: Messages = {
   language: "語言",
   searchLanguage: "搜尋語言…",
   noMatches: "沒有符合的語言",
+  openFilesWith: "檔案開啟方式",
+  openFilesWithHint:
+    "證據裡的檔案來源會用它開啟（有行號就跳到該行）；連結仍用瀏覽器開啟。",
+  editorSystem: "系統預設",
   archive: "封存",
   showArchive: "顯示已封存的目標",
   hideArchive: "返回進行中的目標",
@@ -208,7 +222,7 @@ const zhHant: Messages = {
 
   // projects (sidebar grouping)
   projectsHeading: "專案",
-  watchProjectAuto: "＋ 監看專案（自動）",
+  watchProjectAuto: "監看專案（自動）",
   removeProject: "停止監看",
   confirmRemoveProject: (dir) =>
     `停止自動監看「${dir}」？其 session 目標不再攔停；目標與證據會保留。`,

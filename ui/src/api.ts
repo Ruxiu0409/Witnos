@@ -97,8 +97,12 @@ export const ruleItem = (
   afterDrillDown: boolean,
 ) => invoke("rule_item", { goalId, itemId, approve, afterDrillDown });
 
-export const drillDown = (goalId: string, evidenceId: string, pointer: Pointer) =>
-  invoke("drill_down", { goalId, evidenceId, pointer });
+export const drillDown = (
+  goalId: string,
+  evidenceId: string,
+  pointer: Pointer,
+  editor: string,
+) => invoke("drill_down", { goalId, evidenceId, pointer, editor });
 
 export const closeGoal = (goalId: string) => invoke("close_goal", { goalId });
 export const deleteGoal = (goalId: string) => invoke("delete_goal", { goalId });

@@ -2,11 +2,21 @@
   /* Overridden inline from React state; these are the fallbacks. */
   --sidebar-w: 280px;
   --detail-w: 440px;
+  /* The macOS title bar is 28px; matching it puts the strip's centred
+     buttons on the same line as the traffic lights. */
+  --titlebar-h: 28px;
+  /* Room the traffic lights need. Zero off macOS, where the window keeps
+     its own decorations and the strip is just a toolbar. */
+  --tb-lead: 0px;
   position: relative;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: var(--titlebar-h) minmax(0, 1fr);
   height: 100%;
+}
+
+.app.mac {
+  --tb-lead: 76px;
 }
 
 /* Dragging a pane divider: 1:1 tracking (no width transition), and keep the
@@ -23,19 +33,38 @@
 }
 
 .sidebar {
-  grid-area: 1 / 1;
+  grid-area: 2 / 1;
 }
 
 /* The middle pane. Shows the terminal by default, or the settings view. */
 .workspace {
-  grid-area: 1 / 2;
+  grid-area: 2 / 2;
   display: flex;
   min-width: 0;
   min-height: 0;
 }
 
 .detail {
-  grid-area: 1 / 3;
+  grid-area: 2 / 3;
+}
+
+/* ---------- title bar ---------- */
+
+/* Spans the window: the pane toggles sit at its ends, and everything
+   between them drags the window (the native title bar is transparent). */
+.titlebar {
+  grid-area: 1 / 1 / 2 / 4;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: var(--tb-lead);
+  padding-right: 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.titlebar .detail-toggle {
+  margin-left: auto;
 }
 
 /* ---------- sidebar ---------- */
@@ -59,17 +88,14 @@
 }
 
 .sidebar header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 14px 10px 10px 16px;
+  padding: 12px 10px 10px 16px;
   border-bottom: 1px solid var(--border);
 }
 
+/* Collapsed, the wordmark is hidden anyway — drop the whole block so the
+   rail is a clean strip of icons instead of an empty bordered box. */
 .sidebar.collapsed header {
-  justify-content: center;
-  padding: 14px 6px 10px;
+  display: none;
 }
 
 .sidebar-title {
@@ -94,21 +120,23 @@
   align-items: center;
   justify-content: center;
   background: none;
+  border-color: transparent;
   color: var(--dim);
-  padding: 4px 7px;
+  padding: 2px 6px;
 }
 
 .sidebar-toggle:hover,
 .detail-toggle:hover {
   color: var(--text);
+  border-color: transparent;
+  background: var(--panel2);
 }
 
-/* The sidebar clips overflow (collapse animation), so the tooltip is
-   position:fixed to escape the clip; it tracks the sidebar width var. */
+/* Hangs below the title-bar strip, aligned under its own button. */
 .toggle-tip {
   position: fixed;
-  top: 13px;
-  left: calc(var(--sidebar-w) + 8px);
+  top: calc(var(--titlebar-h) + 7px);
+  left: var(--tb-lead);
   z-index: 30;
   display: flex;
   align-items: center;
@@ -129,18 +157,10 @@
     visibility 0.12s;
 }
 
-.sidebar.collapsed .toggle-tip {
-  left: 54px;
-}
-
-/* The detail toggle's tooltip hangs leftward off the pane instead. */
+/* The right-hand toggle's tip is right-aligned so it can't overflow. */
 .detail-toggle .toggle-tip {
   left: auto;
-  right: calc(min(var(--detail-w), 60vw) + 8px);
-}
-
-.detail.collapsed .detail-toggle .toggle-tip {
-  right: 54px;
+  right: 8px;
 }
 
 .sidebar-toggle:hover .toggle-tip,
@@ -348,11 +368,40 @@
   flex-shrink: 0;
 }
 
-.watch-project {
-  display: block;
-  width: calc(100% - 20px);
-  margin: 8px 10px 2px;
-  font-size: 12px;
+/* The add-project affordance: lives at the right edge of the "projects"
+   heading, hidden until the pointer is over the projects section (or the
+   button holds keyboard focus) — ChatGPT-sidebar style. Only the right
+   padding tightens, so the heading keeps the height of the other ones. */
+.archive-head.proj-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-right: 10px;
+}
+
+.proj-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--dim);
+  padding: 3px 5px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.proj-section:hover .proj-add,
+.proj-add:focus-visible {
+  opacity: 1;
+}
+
+.proj-add:hover {
+  color: var(--text);
+  background: var(--panel2);
+  border-color: transparent;
 }
 
 .sidebar-footer {
@@ -463,23 +512,11 @@
   min-width: 46px;
 }
 
-.detail-head {
-  flex-shrink: 0;
-  display: flex;
-  justify-content: flex-start;
-  padding: 14px 10px 0;
-}
-
-.detail.collapsed .detail-head {
-  justify-content: center;
-  padding: 14px 6px 0;
-}
-
 /* Fixed inner width so the collapse animation clips instead of reflowing. */
 .detail-body {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 18px 60px;
+  padding: 14px 18px 60px;
   width: min(var(--detail-w), 60vw);
   transition:
     opacity 0.12s ease,
@@ -494,10 +531,11 @@
 /* ---------- pane resize handles ---------- */
 
 /* A wide invisible hit strip straddling each pane border; the ::after line
-   is the visible affordance on hover/drag/focus. */
+   is the visible affordance on hover/drag/focus. Starts below the title bar
+   so it can't eat the strip's drag area. */
 .pane-resizer {
   position: absolute;
-  top: 0;
+  top: var(--titlebar-h);
   bottom: 0;
   width: 9px;
   cursor: col-resize;
@@ -801,9 +839,19 @@
   background: var(--bg);
 }
 
-/* Hidden, not unmounted: the shell survives switching the workspace view. */
+/* Hidden, not unmounted: the shells survive switching the workspace view. */
 .term-panel.hidden {
   display: none;
+}
+
+/* One shell in the vertical stack. flex-basis 0 + flexGrow (set inline from
+   each pane's weight) makes the divider drag a pure weight trade. */
+.term-pane {
+  display: flex;
+  flex-direction: column;
+  flex-basis: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .term-head {
@@ -811,14 +859,55 @@
   align-items: center;
   gap: 8px;
   padding: 3px 10px;
+  flex: 0 0 auto;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
   font-size: 12px;
 }
 
+/* Which shell ⌘D splits and the keyboard talks to. Only ever shown with a
+   stack of two or more — a marker on a lone terminal is noise. A left edge,
+   not a ring: a box drawn around a terminal reads as an error state. */
+.term-pane.focused > .term-head {
+  color: var(--text);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.term-splitter {
+  flex: 0 0 auto;
+  height: 4px;
+  background: var(--border);
+  cursor: row-resize;
+  transition: background 120ms ease;
+}
+
+.term-splitter:hover {
+  background: var(--accent);
+}
+
+/* Dragging a divider: keep 1:1 tracking and the row-resize cursor
+   everywhere, the same deal .app.resizing makes for the side panels. */
+body.row-resizing,
+body.row-resizing * {
+  cursor: row-resize !important;
+  user-select: none;
+}
+
 .term-title {
   color: var(--dim);
   letter-spacing: 0.05em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+  max-width: 45%;
+}
+
+/* The ＋/✕ pair: square, quiet, and only as wide as the glyph. */
+.ghost.icon {
+  padding: 0 5px;
+  line-height: 1.5;
+  font-size: 12px;
 }
 
 .term-cwd {
@@ -884,13 +973,27 @@
   border-bottom: 1px solid var(--border);
 }
 
-/* ---------- language picker ---------- */
-
-.lang-picker {
-  position: relative;
+.setting-label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
 }
 
-.lang-picker-btn {
+.setting-hint {
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* ---------- settings pickers (language, editor) ---------- */
+
+.picker {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.picker-btn {
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
@@ -899,13 +1002,13 @@
   padding: 5px 10px;
 }
 
-.lang-picker-chevron {
+.picker-chevron {
   color: var(--dim);
   line-height: 1;
   transform: translateY(-2px);
 }
 
-.lang-picker-pop {
+.picker-pop {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
@@ -919,28 +1022,28 @@
   border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
-  animation: lang-pop-in 120ms ease;
+  animation: picker-pop-in 120ms ease;
 }
 
-@keyframes lang-pop-in {
+@keyframes picker-pop-in {
   from {
     opacity: 0;
     transform: translateY(-4px);
   }
 }
 
-.lang-picker-search {
+.picker-search {
   margin: 8px 8px 4px;
   background: var(--panel);
 }
 
-.lang-picker-list {
+.picker-list {
   list-style: none;
   overflow-y: auto;
   padding: 4px;
 }
 
-.lang-picker-item {
+.picker-item {
   display: flex;
   align-items: center;
   padding: 7px 10px;
@@ -949,20 +1052,20 @@
 }
 
 /* Keyboard and mouse share one highlight (mouseenter moves it). */
-.lang-picker-item.active {
+.picker-item.active {
   background: var(--panel);
 }
 
-.lang-picker-item .lang-localized {
+.picker-item .picker-secondary {
   color: var(--dim);
 }
 
-.lang-picker-item .lang-check {
+.picker-item .picker-check {
   margin-left: auto;
   color: var(--accent);
 }
 
-.lang-picker-empty {
+.picker-empty {
   padding: 8px 10px;
   color: var(--dim);
 }

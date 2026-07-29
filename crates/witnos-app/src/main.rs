@@ -170,21 +170,28 @@ fn rule_item(
 }
 
 /// Record the drill-down (that log is the requirements spec for the future
-/// raw-trace layer), then open the original behind the pointer.
+/// raw-trace layer), then open the original behind the pointer. `editor` is
+/// the UI's "open files with" setting — an editor id from the settings
+/// picker, or "system"/absent for the OS default app.
 #[tauri::command]
 fn drill_down(
     state: State<'_, App>,
     goal_id: String,
     evidence_id: String,
     pointer: Pointer,
+    editor: Option<String>,
 ) -> Result<Value, String> {
     state
         .0
         .store
         .record_drill_down(&goal_id, &evidence_id, pointer.clone())
         .map_err(|e| e.to_string())?;
-    if let Some(goal) = state.0.store.get_goal(&goal_id) {
-        open_original(&goal, &pointer);
+    let goal = state.0.store.get_goal(&goal_id).ok_or("goal not found")?;
+    if let Some(target) = resolve_target(&goal, &pointer)? {
+        // Opening blocks for as long as the OS opener runs — xdg-open's
+        // generic fallback doesn't return until the browser it started exits —
+        // and this command runs on the UI thread.
+        std::thread::spawn(move || open_target(&target, editor.as_deref()));
     }
     Ok(json!({"ok": true}))
 }
@@ -292,37 +299,139 @@ fn list_auto_projects(state: State<'_, App>) -> Vec<Value> {
         .collect()
 }
 
-fn open_original(goal: &Goal, pointer: &Pointer) {
-    let target = match pointer {
-        Pointer::File { path, .. } => {
+/// Where a pointer lands on this machine.
+enum Target {
+    File { path: String, line: Option<u32> },
+    Url(String),
+}
+
+/// Resolve a pointer against the goal's workspace; `None` = nothing to open.
+/// A relative path with no project directory to anchor it is an error rather
+/// than a guess: the bundled app's cwd is `/`, so both the editor URL and the
+/// OS-default fallback would resolve it from the filesystem root and the human
+/// would be told nothing.
+fn resolve_target(goal: &Goal, pointer: &Pointer) -> Result<Option<Target>, String> {
+    match pointer {
+        Pointer::File { path, lines } => {
             let p = PathBuf::from(path);
             let p = if p.is_relative() {
-                goal.project_dir
-                    .as_deref()
-                    .map(|d| PathBuf::from(d).join(&p))
-                    .unwrap_or(p)
+                let dir = goal.project_dir.as_deref().ok_or_else(|| {
+                    format!("cannot open {path}: relative path, and this goal has no project directory to resolve it against")
+                })?;
+                PathBuf::from(dir).join(&p)
             } else {
                 p
             };
-            p.to_string_lossy().into_owned()
+            Ok(Some(Target::File {
+                path: p.to_string_lossy().into_owned(),
+                line: lines.as_deref().and_then(first_number),
+            }))
         }
-        Pointer::Url { url } => url.clone(),
-        Pointer::Command { .. } => return, // nothing to open; the recorded event is the point
+        // URLs always go to whatever owns their scheme (usually the browser).
+        Pointer::Url { url } => Ok(Some(Target::Url(url.clone()))),
+        Pointer::Command { .. } => Ok(None), // the recorded event is the point
+    }
+}
+
+/// Open a resolved target with the UI's "open files with" editor. Every branch
+/// here can block, so this must not run on the UI thread.
+fn open_target(target: &Target, editor: Option<&str>) {
+    let (path, line) = match target {
+        Target::Url(url) => {
+            launch(url);
+            return;
+        }
+        Target::File { path, line } => (path.as_str(), *line),
     };
+    match editor {
+        // Editors registering a `<scheme>://file/<path>[:line]` URL scheme
+        // (VS Code and its forks, Zed). A failed launch means the scheme is
+        // unregistered — the editor isn't installed — so fall through to
+        // the OS default rather than opening nothing.
+        Some(s @ ("vscode" | "cursor" | "windsurf" | "zed")) => {
+            let sep = if path.starts_with('/') { "" } else { "/" };
+            let mut url = format!("{s}://file{sep}{}", percent_encode(path));
+            if let Some(n) = line {
+                url.push_str(&format!(":{n}"));
+            }
+            if launch(&url) {
+                return;
+            }
+        }
+        // Xcode has no file-open URL scheme; `xed` ships in /usr/bin — but as
+        // an xcode-select shim that spawns fine with no Xcode installed, so
+        // only its exit status tells us the file actually opened.
+        Some("xcode") => {
+            let mut cmd = std::process::Command::new("xed");
+            if let Some(n) = line {
+                cmd.arg("--line").arg(n.to_string());
+            }
+            if cmd.arg(path).status().map(|s| s.success()).unwrap_or(false) {
+                return;
+            }
+        }
+        _ => {} // "system" or unknown → OS default
+    }
+    launch(path);
+}
+
+/// Hand the target to the OS opener; true = the opener accepted it. The status
+/// check is what detects an unregistered editor URL scheme. Blocks until the
+/// opener exits.
+fn launch(target: &str) -> bool {
     #[cfg(target_os = "macos")]
-    {
-        let _ = std::process::Command::new("open").arg(&target).spawn();
-    }
+    let status = std::process::Command::new("open").arg(target).status();
     #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        let _ = std::process::Command::new("xdg-open").arg(&target).spawn();
-    }
+    let status = std::process::Command::new("xdg-open").arg(target).status();
     #[cfg(target_os = "windows")]
-    {
-        let _ = std::process::Command::new("cmd")
-            .args(["/C", "start", "", &target])
-            .spawn();
+    let status = {
+        use std::os::windows::process::CommandExt;
+        match windows_open_cmdline(target) {
+            // raw_arg, not arg: the quoting below has to reach cmd verbatim.
+            Some(line) => std::process::Command::new("cmd").raw_arg(line).status(),
+            None => return false,
+        }
+    };
+    status.map(|s| s.success()).unwrap_or(false)
+}
+
+/// The `cmd` command line that opens `target`, or `None` if it can't be handed
+/// over safely. `start` is a cmd builtin, so the target crosses cmd's parser:
+/// an agent-written URL carrying `&` or `|` would split the command line and
+/// run the tail as its own command. Quoting neutralises that; a target holding
+/// a double quote of its own could break back out, so it is refused instead.
+#[cfg(any(target_os = "windows", test))]
+fn windows_open_cmdline(target: &str) -> Option<String> {
+    if target.contains('"') {
+        return None;
     }
+    Some(format!("/C start \"\" \"{target}\""))
+}
+
+/// First run of digits in an evidence `lines` field ("120", "120-140", "L12").
+fn first_number(s: &str) -> Option<u32> {
+    let start = s.find(|c: char| c.is_ascii_digit())?;
+    s[start..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>()
+        .parse()
+        .ok()
+}
+
+/// Percent-encode a filesystem path for a `scheme://file/...` URL, keeping
+/// `/` so the path stays readable in logs and error messages.
+fn percent_encode(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for &b in path.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 fn main() {
@@ -363,4 +472,25 @@ fn main() {
                 witnos_server::graceful_stop(&app.state::<App>().0);
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{first_number, windows_open_cmdline};
+
+    #[test]
+    fn cmd_metacharacters_cannot_leave_the_quoted_target() {
+        assert_eq!(
+            windows_open_cmdline("https://x.test/run?id=1&calc.exe").unwrap(),
+            "/C start \"\" \"https://x.test/run?id=1&calc.exe\""
+        );
+        assert_eq!(windows_open_cmdline("x\"&calc.exe"), None);
+    }
+
+    #[test]
+    fn evidence_line_fields_yield_their_first_number() {
+        assert_eq!(first_number("120-140"), Some(120));
+        assert_eq!(first_number("L12"), Some(12));
+        assert_eq!(first_number("none"), None);
+    }
 }
