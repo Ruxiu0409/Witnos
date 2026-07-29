@@ -214,7 +214,18 @@ fn try_cd(s: &mut Session, dir: &str) -> Result<bool, String> {
     // Ctrl-U first: an idle prompt may still hold a half-typed line, and
     // appending `cd …` to it would run one garbage command instead. Losing the
     // half-line is the lesser cost. \r is what the Enter key actually sends.
-    let line = format!("\x15cd {}\r", sh_quote(dir));
+    //
+    // Then Ctrl-L, so the pane the human is handed doesn't open with the `cd`
+    // we typed for them. It is the keystroke a person would press, which is
+    // what makes it the right one here: the shell's own clear-screen widget
+    // wipes the viewport and redraws the prompt, leaving the scrollback intact
+    // and leaving nothing in the history — where `clear` would add a command
+    // line AND, on macOS, drop the scrollback (/usr/bin/clear emits ESC[3J).
+    // Keeping the history is the whole reason this walks the shell over instead
+    // of restarting it. A shell with no line editor at all would take the ^L as
+    // input; it stays buffered until the prompt reads it, so the worst case is
+    // one stray character, never a command.
+    let line = format!("\x15cd {}\r\x0c", sh_quote(dir));
     s.writer
         .write_all(line.as_bytes())
         .map_err(|e| e.to_string())?;
@@ -443,6 +454,21 @@ mod tests {
         // to be holding when the human clicks a folder.
         sh.type_in("echo MARKER");
         assert!(try_cd(&mut sh.session, &shown).unwrap());
+
+        // The pane is handed over with a clean screen — the human should not
+        // arrive to the `cd` we typed for them. The shell's own clear-screen
+        // widget does it, so the scrollback survives: ESC[3J, which
+        // /usr/bin/clear emits on macOS, must not appear.
+        assert!(
+            sh.wait_until(|sh| sh.printed("\x1b[2J")),
+            "expected the viewport to be cleared, got:\n{}",
+            sh.out.lock().unwrap()
+        );
+        assert!(
+            !sh.printed("\x1b[3J"),
+            "the scrollback must survive the clear:\n{}",
+            sh.out.lock().unwrap()
+        );
 
         sh.type_in("pwd\r");
         assert!(
