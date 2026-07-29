@@ -16,4 +16,14 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 witnos-core = { path = "../witnos-core" }
 witnos-server = { path = "../witnos-server" }
+
+# Only the in-process backend opens a PTY itself. On unix the shells live in the
+# `witnos pty-serve` daemon and this app is a socket client — but the Windows
+# backend is still compiled into the unix TEST build (see src/terminal.rs), which
+# is the only place it gets type-checked at all, so the dependency is needed there
+# too.
+[target.'cfg(not(unix))'.dependencies]
+portable-pty = "0.9.0"
+
+[target.'cfg(unix)'.dev-dependencies]
 portable-pty = "0.9.0"

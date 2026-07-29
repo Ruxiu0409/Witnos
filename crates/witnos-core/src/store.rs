@@ -649,28 +649,42 @@ impl Store {
     }
 
     /// Startup sweep: account every goal whose agent was running in one of
-    /// Witnos's OWN terminals. Those panes died with the previous run, and a
-    /// Claude Code session id never comes back (`/clear` and resume both mint a
-    /// new one, which by design gets its own goal) — so a goal left `Running`
-    /// there would stay running for ever: precisely the zombie `end_turn` above
-    /// exists to prevent, except that here its death is a certainty rather than
-    /// a guess, because no pane exists yet when this runs.
+    /// Witnos's OWN terminals and whose pane is not among `surviving`. Such a
+    /// goal has lost its agent, and a Claude Code session id never comes back
+    /// (`/clear` and resume both mint a new one, which by design gets its own
+    /// goal) — so a goal left `Running` there would stay running for ever:
+    /// precisely the zombie `end_turn` above exists to prevent.
+    ///
+    /// `surviving` is the pane ids the caller's terminal layer still has. It
+    /// used to be implicit and empty — "the app just started, so its panes are
+    /// dead" — which stopped being true the day the shells moved into a daemon
+    /// that outlives the app: a goal whose agent is still sitting in a restored
+    /// pane would have been reported as a run that ended. The core is told the
+    /// ids and nothing about who owns them or how they were asked; a caller who
+    /// cannot answer must skip this sweep entirely rather than pass an empty
+    /// list, because "I don't know" and "nothing survived" are opposite claims.
     ///
     /// A binding with NO pane recorded is deliberately spared: it came from a
     /// shell Witnos did not spawn (a manual `witnos goal new` in the human's own
     /// terminal), and that session may well still be alive. Between the two
-    /// possible mistakes, reporting a live run as ended is the worse one.
+    /// possible mistakes, reporting a live run as ended is the worse one — which
+    /// is also why ONE surviving pane spares a goal that recorded several.
     ///
     /// Not a one-way door: the gate firing again flips the goal back to
     /// `Running` (see `record_gate_decision`), which is what a resume does.
-    pub fn account_ended_panes(&self) {
+    pub fn account_ended_panes(&self, surviving: &[u32]) {
         // Ids collected under the read lock, which is dropped before `end_turn`
         // takes the write one — this RwLock is not reentrant.
         let lost: Vec<GoalId> = self
             .read()
             .values()
             .filter(|g| {
-                g.status == GoalStatus::Running && g.sessions.iter().any(|s| s.pane.is_some())
+                g.status == GoalStatus::Running
+                    && g.sessions.iter().any(|s| s.pane.is_some())
+                    && !g
+                        .sessions
+                        .iter()
+                        .any(|s| s.pane.is_some_and(|p| surviving.contains(&p)))
             })
             .map(|g| g.id.clone())
             .collect();

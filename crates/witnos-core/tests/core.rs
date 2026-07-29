@@ -864,9 +864,9 @@ fn end_turn_accounts_only_running_goals_and_the_gate_revives() {
     assert_eq!(store.get_goal(&g.id).unwrap().status, parked);
 }
 
-/// A fresh start means no pane exists, so a goal whose session ran in one of
-/// Witnos's own panes has definitely lost its agent — account it rather than
-/// leave a goal `running` that nothing will ever come back to.
+/// A goal whose pane is not among the survivors has lost its agent — account it
+/// rather than leave a goal `running` that nothing will ever come back to. (No
+/// survivors at all is the ordinary case when no terminal daemon was running.)
 #[test]
 fn startup_accounts_goals_whose_pane_died_with_the_app() {
     let (store, dir) = temp_store();
@@ -881,7 +881,7 @@ fn startup_accounts_goals_whose_pane_died_with_the_app() {
         .record_gate_decision(&parked.id, GateDecisionKind::Release, None)
         .unwrap();
 
-    store.account_ended_panes();
+    store.account_ended_panes(&[]);
     let status = |id: &str| store.get_goal(id).unwrap().status;
     assert_eq!(status(&ours.id), GoalStatus::TurnEndedUnmet);
     assert_eq!(status(&parked.id), GoalStatus::AwaitingRulings);
@@ -897,7 +897,7 @@ fn startup_accounts_goals_whose_pane_died_with_the_app() {
             .count()
     };
     assert_eq!(turn_ends(&ours.id), 1);
-    store.account_ended_panes();
+    store.account_ended_panes(&[]);
     assert_eq!(turn_ends(&ours.id), 1, "a second start must not re-account it");
 
     // Durable, and still not a one-way door: a resumed session's gate revives it.
@@ -929,7 +929,7 @@ fn startup_spares_sessions_witnos_did_not_spawn() {
         .bind_session(&mixed.id, "claude-code", "s-in-pane", Some(3))
         .unwrap();
 
-    store.account_ended_panes();
+    store.account_ended_panes(&[]);
 
     assert_eq!(
         store.get_goal(&theirs.id).unwrap().status,
@@ -940,5 +940,43 @@ fn startup_spares_sessions_witnos_did_not_spawn() {
         store.get_goal(&mixed.id).unwrap().status,
         GoalStatus::TurnEndedUnmet,
         "one recorded pane of ours is enough: that pane is gone"
+    );
+}
+
+/// The premise this sweep used to rest on — "the app just started, so its panes
+/// are dead" — died with the terminal daemon: a pane can now outlive the app, and
+/// the agent sitting in it is still working. So a goal whose pane is among the
+/// survivors is left alone, and one surviving pane is enough for a goal that
+/// recorded several: both rules err toward not declaring a live run dead.
+#[test]
+fn startup_leaves_goals_whose_pane_survived_the_restart() {
+    let (store, _dir) = temp_store();
+    let (restored, _) = store
+        .create_auto_goal("still running", "/proj", "s-restored", "claude-code", Some(7))
+        .unwrap();
+    let (lost, _) = store
+        .create_auto_goal("pane closed", "/proj", "s-lost", "claude-code", Some(8))
+        .unwrap();
+    // Resumed into a second pane; the first one is gone, the second survived.
+    let (moved, _) = store
+        .create_auto_goal("resumed", "/proj", "s-first", "claude-code", Some(9))
+        .unwrap();
+    store
+        .bind_session(&moved.id, "claude-code", "s-second", Some(10))
+        .unwrap();
+
+    store.account_ended_panes(&[7, 10, 4242]);
+
+    let status = |id: &str| store.get_goal(id).unwrap().status;
+    assert_eq!(
+        status(&restored.id),
+        GoalStatus::Running,
+        "the pane came back — its agent was never gone"
+    );
+    assert_eq!(status(&lost.id), GoalStatus::TurnEndedUnmet);
+    assert_eq!(
+        status(&moved.id),
+        GoalStatus::Running,
+        "one surviving pane is enough to leave a goal alone"
     );
 }

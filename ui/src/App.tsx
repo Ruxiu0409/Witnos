@@ -81,15 +81,24 @@ function livePane(goal: api.Goal): number | null {
 }
 
 // Is this goal's agent gone for good? Liveness is computed, never stored: a goal
-// is reachable exactly while one of the panes it recorded still exists in THIS
-// app with a live shell. A recorded pane was one of our own terminals, so once it
-// is gone so is the session — and a Claude Code session id never comes back
-// (/clear and resume both mint a new one, which by design gets its own goal).
+// is reachable exactly while one of the panes it recorded is still a pane the
+// terminal panel has, with a live shell. Once that pane is really gone so is the
+// session — and a Claude Code session id never comes back (/clear and resume both
+// mint a new one, which by design gets its own goal).
 //
-// Two deliberate asymmetries. A goal with NO pane recorded answers false: that
-// session came from a shell Witnos never spawned and may be alive right now.
-// And every pane must be gone, not just the newest one livePane picks for
-// sending — both rules err the same way, toward not declaring a live run dead.
+// Quitting the app is no longer one of the ways a pane goes away: the shells live
+// in a daemon that outlives it, and the panel rebuilds a pane per surviving shell
+// on startup, so a restored pane reads as alive here. That is the same premise
+// the core's startup sweep now works from (Store::account_ended_panes takes the
+// surviving pane ids) — the two must agree, or the banner and the goal's status
+// would tell the human opposite stories about the same run.
+//
+// Three deliberate asymmetries, all erring toward not declaring a live run dead.
+// A goal with NO pane recorded answers false: that session came from a shell
+// Witnos never spawned and may be alive right now. Every pane must be gone, not
+// just the newest one livePane picks for sending. And a probe that is null —
+// there is no panel, or it has not yet asked what survived — answers false too:
+// not knowing is not the same as knowing it ended.
 function sessionGone(goal: api.Goal, probe: ActivityProbe | null): boolean {
   const panes = goal.sessions
     .map((s) => s.pane)

@@ -9,11 +9,48 @@ import type { Messages } from "./i18n";
 import type { Appearance } from "./theme";
 import "@xterm/xterm/css/xterm.css";
 
-// Fresh ids per mount: StrictMode's mount→unmount→mount must not let two
-// shells share one id (spawn/kill invokes may resolve out of order). Pane
-// keys come from the same counter, so a new pane can never inherit a dead
-// pane's identity either.
-let nextId = Math.floor(Math.random() * 0x7fffffff);
+// Pane keys are this component's bookkeeping and nothing else: they name a row
+// in the stack, never a shell. Shell ids come from the backend, which is where
+// they have to come from — the shells outlive the app, and `WITNOS_PANE` is the
+// durable address a goal's session binding points at.
+let nextKey = 1;
+
+/** One pane's shell, minted once and remembered OUTSIDE React.
+ *
+ *  StrictMode mounts every view twice, and a second `term_spawn` would open a
+ *  second shell nobody is watching — which would then sit in the daemon for
+ *  ever, since letting go of a pane no longer ends it. Keyed by pane key, so one
+ *  pane is one session for as long as the pane lives. This is memory of an id,
+ *  never a generator of one. */
+const shells = new Map<number, Promise<number>>();
+
+function shellFor(
+  key: number,
+  restore: number | null,
+  cols: number,
+  rows: number,
+  cwd: string | null,
+): Promise<number> {
+  let pending = shells.get(key);
+  if (!pending) {
+    pending = invoke<number>("term_spawn", { id: restore, cols, rows, cwd });
+    // A failed open must stay retryable (the header offers a restart), so it is
+    // not remembered as this pane's answer.
+    pending.catch(() => shells.delete(key));
+    shells.set(key, pending);
+  }
+  return pending;
+}
+
+/** End a pane's shell and forget it, so nothing reattaches to a session that is
+ *  gone and the next mount opens a fresh one. The only callers are the human's
+ *  two deliberate gestures — ✕ and restart; everything else detaches. */
+function killShell(pane: Pane) {
+  if (pane.shellId !== null) {
+    invoke("term_kill", { id: pane.shellId }).catch(() => {});
+  }
+  shells.delete(pane.key);
+}
 
 // xterm's stock ANSI set assumes a dark background: on a light one its yellow
 // and its white land near-invisible, and half of what an agent prints is
@@ -88,10 +125,6 @@ function activityFromTitle(title: string | null): PaneActivity {
 }
 
 type PaneApi = {
-  /** The id the shell was spawned under — this pane's identity to the core.
-   *  It is minted per mount inside the view, so it travels up from there
-   *  instead of being hoisted: a restart must get a fresh one. */
-  shellId: number;
   focus: () => void;
   /** Move this shell to `dir`; resolves false if it was busy (nothing sent).
    *  On success the pane clears its own viewport once the cd has landed, so
@@ -99,8 +132,20 @@ type PaneApi = {
   tryCd: (dir: string) => Promise<boolean>;
 };
 
+/** A shell the backend already has, as `term_list` reports it. */
+type PaneInfo = {
+  id: number;
+  cwd: string;
+  alive: boolean;
+};
+
 type Pane = {
   key: number;
+  /** The shell this pane is attached to, as the backend named it — null until it
+   *  answers, and null again after a restart. This is the id the core knows the
+   *  pane by (WITNOS_PANE, and the `pane` recorded on a goal's session), which is
+   *  why a restored pane carries the one it already had. */
+  shellId: number | null;
   /** Where the shell was started — the only directory it is known to be in. */
   cwd: string | null;
   /** Where it says it is now, when the shell reports it (OSC 7). */
@@ -136,7 +181,8 @@ function cwdFromOsc7(data: string): string | null {
 
 function newPane(cwd: string | null, weight: number): Pane {
   return {
-    key: nextId++,
+    key: nextKey++,
+    shellId: null,
     cwd,
     liveCwd: null,
     title: null,
@@ -146,10 +192,28 @@ function newPane(cwd: string | null, weight: number): Pane {
   };
 }
 
+/** A pane rebuilt from a shell that is already running: the same id it had
+ *  before, the directory it was started in, and its scrollback on the way as the
+ *  replay. */
+function restoredPane(info: PaneInfo, weight: number): Pane {
+  return {
+    key: nextKey++,
+    shellId: info.id,
+    cwd: info.cwd,
+    liveCwd: null,
+    title: null,
+    gen: 0,
+    exited: !info.alive,
+    weight,
+  };
+}
+
 function TerminalView({
   paneKey,
+  shellId,
   cwd,
   onExit,
+  onShell,
   onTitle,
   onCwd,
   bindApi,
@@ -157,8 +221,11 @@ function TerminalView({
   appearance,
 }: {
   paneKey: number;
+  /** A shell to reattach to (a pane restored on startup), or null to open one. */
+  shellId: number | null;
   cwd: string | null;
   onExit: () => void;
+  onShell: (id: number) => void;
   onTitle: (title: string) => void;
   onCwd: (dir: string) => void;
   bindApi: (key: number, api: PaneApi | null) => void;
@@ -170,11 +237,14 @@ function TerminalView({
   const fitRef = useRef<FitAddon | null>(null);
   // Everything the mount-once effect calls later goes through this ref, so a
   // re-render (new language, new pane list) can't leave it on stale closures.
-  const cb = useRef({ onExit, onTitle, onCwd, t });
-  cb.current = { onExit, onTitle, onCwd, t };
+  const cb = useRef({ onExit, onShell, onTitle, onCwd, t });
+  cb.current = { onExit, onShell, onTitle, onCwd, t };
 
   useEffect(() => {
-    const id = nextId++;
+    // The shell this view talks to, once the backend has answered — everything
+    // below reads it through this one binding. Before it lands there is no shell
+    // to talk to, and nothing pretends otherwise.
+    let id: number | null = null;
     const term = new Terminal({
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
       fontSize: 13,
@@ -228,9 +298,9 @@ function TerminalView({
       }, 120);
     };
     bindApi(paneKey, {
-      shellId: id,
       focus: () => term.focus(),
       tryCd: async (dir) => {
+        if (id === null) return false;
         const moved = await invoke<boolean>("term_try_cd", { id, dir });
         if (moved) deadline = Date.now() + 1500;
         return moved;
@@ -238,14 +308,45 @@ function TerminalView({
     });
 
     let alive = true;
-    invoke("term_spawn", { id, cols: term.cols, rows: term.rows, cwd }).catch(
-      (e) =>
+    // The token naming OUR attachment, so letting go cannot cut off whichever
+    // view took the pane over after us (StrictMode's second mount is exactly
+    // that, and so is any remount).
+    let token: number | null = null;
+    const opening = shellFor(paneKey, shellId, term.cols, term.rows, cwd);
+    opening
+      .then(async (shell) => {
+        // The pane stopped claiming this shell while the open was in flight —
+        // it was closed or restarted. Nobody will ever attach to it now, and a
+        // shell nobody attaches to would sit in the daemon for ever, so this is
+        // the one place other than the human's own gestures that ends a session.
+        if (shells.get(paneKey) !== opening) {
+          invoke("term_kill", { id: shell }).catch(() => {});
+          return;
+        }
+        // Already unmounted, but the pane still claims this shell: whoever
+        // mounted next attaches to it, and this view must not touch it.
+        if (!alive) return;
+        id = shell;
+        cb.current.onShell(shell);
+        // Attaching is per mount, not per session: the shell was already running
+        // (a restored pane) or has just been opened, and this is what starts its
+        // scrollback replay and its live output flowing into this view.
+        token = await invoke<number>("term_attach", { id: shell });
+        // Unmounted while that was in flight: let go again, or the pane would
+        // keep streaming into a terminal that has been disposed.
+        if (!alive) invoke("term_detach", { id: shell, token }).catch(() => {});
+      })
+      .catch((e) => {
+        if (!alive) return;
         term.write(
           `\r\n\x1b[31m${cb.current.t.shellStartFailed(String(e))}\x1b[0m\r\n`,
-        ),
-    );
+        );
+        // Say it in the header too, or a pane with no shell offers no way back.
+        cb.current.onExit();
+      });
 
     term.onData((data) => {
+      if (id === null) return; // nothing has opened yet; there is nowhere to type
       invoke("term_write", { id, data }).catch(() => {});
     });
 
@@ -279,6 +380,7 @@ function TerminalView({
     const ro = new ResizeObserver(() => {
       if (!boxRef.current || boxRef.current.clientHeight === 0) return;
       fit.fit();
+      if (id === null) return; // the size it opens with is the size we just fitted
       invoke("term_resize", { id, cols: term.cols, rows: term.rows }).catch(
         () => {},
       );
@@ -292,7 +394,13 @@ function TerminalView({
       ro.disconnect();
       unOut.then((f) => f());
       unExit.then((f) => f());
-      invoke("term_kill", { id }).catch(() => {});
+      // Detach, never kill. This runs on every unmount — StrictMode's second
+      // mount, a workspace view switch, the window closing — and the shell has
+      // to survive all three: that is the whole feature. Ending a session is a
+      // human gesture, and it happens in the panel (see killShell).
+      if (id !== null && token !== null) {
+        invoke("term_detach", { id, token }).catch(() => {});
+      }
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
@@ -344,9 +452,15 @@ export default function TerminalPanel({
   // Hide instead of unmount: the shells must survive workspace view switches.
   hidden?: boolean;
 }) {
-  // A vertical stack of shells, top to bottom. One at first; ⌘D adds another.
-  const [panes, setPanes] = useState<Pane[]>(() => [newPane(cwd, 1)]);
-  const [focused, setFocused] = useState(panes[0].key);
+  // A vertical stack of shells, top to bottom. Empty until the backend has said
+  // which ones already exist (see the restore effect); ⌘D adds another.
+  const [panes, setPanes] = useState<Pane[]>([]);
+  // Has that question been asked and answered? Until it has, this panel knows
+  // nothing about any pane and must not answer questions about them — "not asked
+  // yet" is not "gone", and the difference decides whether a goal's agent is
+  // reported as unreachable.
+  const [restored, setRestored] = useState(false);
+  const [focused, setFocused] = useState(0);
   const stackRef = useRef<HTMLDivElement>(null);
   const apis = useRef(new Map<number, PaneApi>());
   // Mirrors of the state for the keyboard/pointer handlers, which must read
@@ -373,25 +487,54 @@ export default function TerminalPanel({
     );
   }, []);
 
+  // Sessions are restored, not respawned: the shells outlive the app, so
+  // reopening the window rebuilds one pane per surviving shell and attaches to
+  // each — the replay is what makes a terminal look as it was left, agent and
+  // all. A fresh shell opens only when nothing survived. Asked once per panel:
+  // which shells exist is a property of the machine, not of a render.
+  useEffect(() => {
+    let alive = true;
+    invoke<PaneInfo[]>("term_list")
+      .then((existing) => {
+        if (!alive) return;
+        setPanes(
+          existing.length > 0
+            ? existing.map((info) => restoredPane(info, 1))
+            : [newPane(cwd, 1)],
+        );
+        setRestored(true);
+      })
+      .catch(() => {
+        // Nothing could be listed, so nothing can be restored; the pane that
+        // opens here will report its own failure if the backend is really gone.
+        if (!alive) return;
+        setPanes([newPane(cwd, 1)]);
+        setRestored(true);
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Answered from the title this panel already tracks, at the moment someone
   // asks (see App's send-to-agent), off the same refs the keyboard handlers
   // read — so the answer is current without this being a dependency of
-  // anything. A pane this app never had, or one whose shell died, is `gone`
-  // rather than a state: its title is frozen at the moment of death, and after
-  // a restart the ids on a goal name panes from a previous run. Nothing can be
-  // typed at either, so whoever asks may say so plainly.
+  // anything. A pane this app has no row for, or one whose shell died, is `gone`
+  // rather than a state: nothing can be typed at either, so whoever asks may say
+  // so plainly. Shell ids are durable and never reused, so a recorded pane this
+  // panel cannot find really is gone — but only once the restore has run, which
+  // is why the probe is not published before then.
   const activity = useCallback<ActivityProbe>((shellId) => {
-    const pane = panesRef.current.find(
-      (p) => apis.current.get(p.key)?.shellId === shellId,
-    );
+    const pane = panesRef.current.find((p) => p.shellId === shellId);
     if (!pane || pane.exited) return "gone";
     return activityFromTitle(pane.title);
   }, []);
 
   useEffect(() => {
-    bindActivity(activity);
+    bindActivity(restored ? activity : null);
     return () => bindActivity(null);
-  }, [bindActivity, activity]);
+  }, [bindActivity, activity, restored]);
 
   // A new pane opens in the selected project's directory — the same rule the
   // first pane and "restart here" already follow — falling back to where the
@@ -421,10 +564,16 @@ export default function TerminalPanel({
   );
 
   const close = useCallback((key: number) => {
+    const list = panesRef.current;
+    // The workspace always keeps one shell — closing the last one would leave
+    // nothing to type into.
+    if (list.length < 2) return;
+    const closing = list.find((p) => p.key === key);
+    if (!closing) return;
+    // ✕ is the one gesture that means "end this shell", so it is the one place
+    // that kills. Everything else — unmounting, hiding, quitting — detaches.
+    killShell(closing);
     setPanes((prev) => {
-      // The workspace always keeps one shell — closing the last one would
-      // leave nothing to type into.
-      if (prev.length < 2) return prev;
       const i = prev.findIndex((p) => p.key === key);
       if (i < 0) return prev;
       const out = prev.filter((p) => p.key !== key);
@@ -455,11 +604,18 @@ export default function TerminalPanel({
 
   const restart = useCallback(
     (key: number) => {
+      // The human asked for a new shell here, so the old one ends — otherwise it
+      // would keep running in the daemon with nothing attached to it. Clearing
+      // shellId is what makes the remount open a fresh session instead of
+      // reattaching to the one just killed.
+      const previous = panesRef.current.find((p) => p.key === key);
+      if (previous) killShell(previous);
       setPanes((prev) =>
         prev.map((p) =>
           p.key === key
             ? {
                 ...p,
+                shellId: null,
                 cwd: cwd ?? p.liveCwd ?? p.cwd,
                 liveCwd: null,
                 title: null,
@@ -627,8 +783,10 @@ export default function TerminalPanel({
               <TerminalView
                 key={p.gen}
                 paneKey={p.key}
+                shellId={p.shellId}
                 cwd={p.cwd}
                 bindApi={bindApi}
+                onShell={(shell) => patch(p.key, { shellId: shell })}
                 onExit={() => patch(p.key, { exited: true })}
                 onTitle={(title) => patch(p.key, { title: title || null })}
                 onCwd={(d) => patch(p.key, { liveCwd: d })}

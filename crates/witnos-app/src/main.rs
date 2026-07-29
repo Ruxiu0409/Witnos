@@ -18,7 +18,7 @@ use witnos_server::AppState;
 
 struct App(Arc<AppState>);
 
-fn witnos_home() -> PathBuf {
+pub(crate) fn witnos_home() -> PathBuf {
     if let Ok(h) = std::env::var("WITNOS_HOME") {
         return PathBuf::from(h);
     }
@@ -522,11 +522,28 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            let terminals = terminal::Terminals::default();
+            // Asked BEFORE the core starts, so the sweep below can follow it
+            // immediately: a `running` goal whose pane is gone should be readable
+            // by a hook for as short a window as possible. Cheap on purpose — it
+            // never starts a daemon, because a daemon that is not running has no
+            // surviving panes anyway, which is also the answer on a first launch.
+            let surviving = terminals.surviving();
             let handle =
                 tauri::async_runtime::block_on(witnos_server::start(&witnos_home()))
                     .map_err(|e| e as Box<dyn std::error::Error>)?;
+            // The startup sweep the core used to do unconditionally: account
+            // every goal whose agent was running in a pane of ours that is no
+            // longer there. Only the app can say which those are — the panes now
+            // live in a daemon that outlives it, so "we just started" no longer
+            // means "our panes are dead". A terminal layer that cannot answer
+            // sweeps nothing at all: unknown must never be reported as ended.
+            if let Some(panes) = &surviving {
+                let ids: Vec<u32> = panes.iter().map(|p| p.id).collect();
+                handle.state.store.account_ended_panes(&ids);
+            }
             app.manage(App(handle.state.clone()));
-            app.manage(terminal::Terminals::default());
+            app.manage(terminals);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -547,6 +564,9 @@ fn main() {
             remove_auto_project,
             list_auto_projects,
             terminal::term_spawn,
+            terminal::term_attach,
+            terminal::term_detach,
+            terminal::term_list,
             terminal::term_write,
             terminal::term_resize,
             terminal::term_try_cd,
