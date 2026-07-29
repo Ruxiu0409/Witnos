@@ -577,16 +577,18 @@ export default function App() {
       if (k === "s") {
         e.preventDefault();
         toggleSidebar();
-      } else if (k === "i") {
+      } else if (k === "i" && sel) {
         // ⌘I, not ⌘D: the terminal owns ⌘D (split a shell downwards), the
-        // one shortcut a terminal user reaches for without thinking.
+        // one shortcut a terminal user reaches for without thinking. Dead
+        // while no goal is selected: there is no pane to toggle, and flipping
+        // the stored preference from here would only surprise you later.
         e.preventDefault();
         toggleDetail();
       }
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [toggleSidebar, toggleDetail]);
+  }, [toggleSidebar, toggleDetail, sel]);
 
   const watchingCount = goals.filter((g) => g.watching).length;
   const archivedGoals = goals.filter((g) => g.status === "closed");
@@ -721,7 +723,7 @@ export default function App() {
                 ⚖ {needsYou.length}
               </span>
             )}
-          {workspaceView !== "settings" && (
+          {workspaceView !== "settings" && sel && (
             <button
               className="detail-toggle"
               onClick={toggleDetail}
@@ -1070,7 +1072,13 @@ export default function App() {
         )}
       </main>
 
-      {workspaceView !== "settings" && (
+      {/* No goal, no pane. This pane is a contract or it is nothing: with
+          nothing selected it used to stand there full-width explaining itself,
+          which is a third of the window spent on a sentence you read once. The
+          toggle goes with it — an empty pane is not worth a control, and ⌘I
+          must not quietly flip a preference that only bites later, when a goal
+          IS open. */}
+      {workspaceView !== "settings" && sel && (
         <>
           {!detailCollapsed && (
             <ResizeHandle
@@ -1085,11 +1093,10 @@ export default function App() {
           )}
           <aside className={`detail ${detailCollapsed ? "collapsed" : ""}`}>
             <div className="detail-body">
-              {!goal ? (
-                <div className="empty">
-                  {selProject ? t.projectHint : t.selectAGoal}
-                </div>
-              ) : (
+              {/* Blank only for the moment between clicking a goal and the
+                  store answering — there is no "nothing selected" state to
+                  render here any more. */}
+              {goal && (
                 <>
                   {/* Title only. The status is on the row in the sidebar, and
                       the two states that actually change what this pane means —

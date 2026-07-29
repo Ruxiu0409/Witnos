@@ -629,12 +629,6 @@
   background: var(--accent);
 }
 
-.empty {
-  color: var(--dim);
-  padding: 40px;
-  text-align: center;
-}
-
 .goal-head {
   /* The gap the subtitle used to leave between the title and whatever the
      contract opens with — a banner, or the first item. */

@@ -144,12 +144,9 @@ const en = {
   projectNotWatched: "not auto-watched",
   noProjectHeading: "no project",
   needsRulingDot: "new evidence for you to look at",
-  projectHint:
-    "Open the terminal, run your agent (e.g. `claude`), and type a task — each new session gets its own goal, watchable here.",
   restartHere: "restart shell here",
 
   // goal detail
-  selectAGoal: "select a goal",
   goalStatus: (s: string) => GOAL_STATUS_EN[s] ?? s.replaceAll("_", " "),
   closeGoal: "close goal",
   confirmCloseGoal: (title: string) =>
@@ -273,14 +270,11 @@ const zhHant: Messages = {
   projectNotWatched: "未自動監看",
   noProjectHeading: "未綁定專案",
   needsRulingDot: "有新證據等你看",
-  projectHint:
-    "打開終端機、啟動你的 agent（例如 `claude`）、輸入任務——每個新 session 會自動建立自己的目標，在這裡即時監看。",
   restartHere: "在此重啟 shell",
   confirm: "確認",
   delete: "刪除",
 
   // goal detail
-  selectAGoal: "選擇一個目標",
   goalStatus: (s) => GOAL_STATUS_ZH[s] ?? s.replaceAll("_", " "),
   closeGoal: "關閉目標",
   confirmCloseGoal: (title) => `確定關閉目標「${title}」？之後不會再有代理讀取它。`,
