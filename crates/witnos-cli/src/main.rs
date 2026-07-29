@@ -121,9 +121,8 @@ fn cmd_arm(rest: &[String]) -> ExitCode {
         eprintln!("cannot write armed marker: {e}");
         return ExitCode::FAILURE;
     }
-    println!(
-        "armed: goal {goal_id} (contract v{version}) — the Stop gate now fails closed in this project"
-    );
+    println!("armed: goal {goal_id} (contract v{version})");
+    println!("the Stop gate now fails closed in this project");
     ExitCode::SUCCESS
 }
 
@@ -136,11 +135,9 @@ fn cmd_disarm() -> ExitCode {
                 Ok(()) => {
                     println!("disarmed: {} is no longer watched", root.display());
                     if was_auto {
-                        println!(
-                            "note: this project is registered for auto-watch — the marker \
-                             returns when the Witnos app restarts; remove the project in \
-                             the app to stop for good"
-                        );
+                        println!("note: auto-watch is still registered —");
+                        println!("      the marker returns when the app restarts.");
+                        println!("      To stop for good, remove the project in the app.");
                     }
                     ExitCode::SUCCESS
                 }

@@ -54,10 +54,7 @@ pub fn run() -> ExitCode {
     }
 
     if changed.is_empty() {
-        println!(
-            "witnos hooks already installed in {}",
-            settings_path.display()
-        );
+        println!("witnos hooks: already installed");
     } else {
         let parent = settings_path.parent().expect("settings path has a parent");
         if let Err(e) = std::fs::create_dir_all(parent).and_then(|_| {
@@ -69,18 +66,14 @@ pub fn run() -> ExitCode {
             eprintln!("witnos: cannot write {}: {e}", settings_path.display());
             return ExitCode::FAILURE;
         }
-        println!(
-            "installed witnos hooks ({}) into {}",
-            changed.join(", "),
-            settings_path.display()
-        );
+        println!("witnos hooks: installed {}", changed.join(", "));
     }
-    println!(
-        "notes:\n\
-         \x20 - the folder must be trusted by Claude Code, and new hooks may need approval (/hooks)\n\
-         next: watch this project in the Witnos app (auto mode — each new agent session gets a goal\n\
-         from its first prompt), or run `witnos goal new \"<title>\"` here to arm a single goal."
-    );
+    // Short lines on purpose: this renders in narrow embedded terminals.
+    println!("  file: {}", settings_path.display());
+    println!();
+    println!("  - trust this folder in Claude Code (/hooks to approve)");
+    println!("  - watch:  Witnos app → \"watch a project (auto)\"");
+    println!("  - manual: witnos goal new \"<title>\"");
     ExitCode::SUCCESS
 }
 
