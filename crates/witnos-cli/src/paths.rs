@@ -50,10 +50,16 @@ pub fn read_marker(marker_path: &Path) -> Option<ArmedMarker> {
 /// instructed) get concurrent writers; a torn file would merely re-inject
 /// once, but atomicity costs nothing.
 pub fn write_atomic(path: &Path, content: &str) {
+    let _ = write_atomic_checked(path, content);
+}
+
+/// The same write, for the callers that must know whether it landed: the PTY
+/// daemon's session-id allocator cannot silently fail to persist, or the next
+/// daemon would hand out an id a live pane already answers to.
+pub fn write_atomic_checked(path: &Path, content: &str) -> std::io::Result<()> {
     let tmp = path.with_extension("json.tmp");
-    if std::fs::write(&tmp, content).is_ok() {
-        let _ = std::fs::rename(&tmp, path);
-    }
+    std::fs::write(&tmp, content)?;
+    std::fs::rename(&tmp, path)
 }
 
 /// Is this agent session running inside Witnos's own embedded terminal?

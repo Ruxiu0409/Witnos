@@ -10,6 +10,9 @@ mod hook_stop;
 mod hook_ups;
 mod init;
 mod paths;
+mod pty_serve;
+#[cfg(unix)]
+mod pty_session;
 
 use std::process::ExitCode;
 
@@ -46,6 +49,7 @@ fn main() -> ExitCode {
             _ => usage(),
         },
         Some("reconcile") => cmds::reconcile(&args[2..]),
+        Some("pty-serve") => pty_serve::run(),
         Some("arm") => cmd_arm(&args[2..]),
         Some("disarm") => cmd_disarm(),
         Some("status") => cmd_status(),
@@ -79,7 +83,10 @@ fn usage() -> ExitCode {
          human-facing:\n\
          \x20 witnos arm <goal-id> [--version N]    write the armed marker here\n\
          \x20 witnos disarm                         remove the armed marker (escape hatch)\n\
-         \x20 witnos status                         show marker + endpoint state"
+         \x20 witnos status                         show marker + endpoint state\n\
+         \n\
+         terminals:\n\
+         \x20 witnos pty-serve   own the agent's shells so they outlive the app (unix)"
     );
     // Exit 64 (EX_USAGE). Never 2: exit code 2 is a live signal to the hook
     // runner and must stay reserved for deliberate use.
