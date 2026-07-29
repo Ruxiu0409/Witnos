@@ -1005,6 +1005,18 @@ body.row-resizing * {
   height: 100%;
 }
 
+/* The black strip under each terminal. Stock xterm.css hard-codes
+   `.xterm-viewport { background-color: #000 }` (its comment: so the macOS scroll
+   bar stays fully opaque) and xterm 6 no longer overwrites it from the theme.
+   The viewport is inset 0 in a box whose height is ours, while the rows it holds
+   are a whole number of cells — the sub-cell remainder at the bottom is stock
+   black showing through, once per pane. Paint it with the pane's own colour
+   rather than transparent, so the scroll bar keeps the opacity that comment is
+   about. */
+.term-box .xterm .xterm-viewport {
+  background-color: var(--bg);
+}
+
 /* ---------- workspace: settings ---------- */
 
 .settings-pane {
