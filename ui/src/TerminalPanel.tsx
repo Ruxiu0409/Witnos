@@ -202,20 +202,28 @@ function TerminalView({
       const n = term.rows - 1;
       if (n > 0) term.write("\n".repeat(n) + `\x1b[${n}A`);
     };
-    // "After the cd lands" is known only to the output stream: the echo, the
-    // cd, and the new prompt arrive as a couple of chunks, so wait out a short
-    // silence after the last of them. A shell that keeps printing (a chpwd
-    // hook, say) runs past the deadline and is left alone — clearing the top
-    // off output the human may want to read is the worse mistake.
+    // "After the cd lands" is a thing only the output stream knows. A
+    // successful cd arms this; the FIRST chunk back starts the clock and every
+    // later one pushes it out, so the clear happens once the shell has finished
+    // echoing the command and drawing the new prompt. Two ways not to fire,
+    // both deliberate: output still coming after the deadline disarms it (a
+    // chpwd hook that prints, say — clearing the top off something the human
+    // may want to read is the worse mistake), and a shell that says nothing at
+    // all never starts the clock, leaving the pane exactly as it was.
     let deadline: number | null = null;
     let quiet: ReturnType<typeof setTimeout> | null = null;
-    const settle = () => {
+    const disarm = () => {
+      deadline = null;
+      if (quiet) clearTimeout(quiet);
+      quiet = null;
+    };
+    const onOutput = () => {
       if (deadline === null) return;
+      if (Date.now() > deadline) return disarm();
       if (quiet) clearTimeout(quiet);
       quiet = setTimeout(() => {
         quiet = null;
-        if (deadline === null) return;
-        deadline = null;
+        disarm();
         clearViewport();
       }, 120);
     };
@@ -224,10 +232,7 @@ function TerminalView({
       focus: () => term.focus(),
       tryCd: async (dir) => {
         const moved = await invoke<boolean>("term_try_cd", { id, dir });
-        if (moved) {
-          deadline = Date.now() + 1500;
-          settle(); // a shell that prints nothing at all still gets cleared
-        }
+        if (moved) deadline = Date.now() + 1500;
         return moved;
       },
     });
@@ -260,13 +265,7 @@ function TerminalView({
     const unOut = listen<{ id: number; data: number[] }>("term:output", (e) => {
       if (e.payload.id !== id) return;
       term.write(new Uint8Array(e.payload.data));
-      if (deadline !== null && Date.now() > deadline) {
-        deadline = null; // still talking: not our screen to clear
-        if (quiet) clearTimeout(quiet);
-        quiet = null;
-      } else {
-        settle();
-      }
+      onOutput();
     });
     const unExit = listen<number>("term:exit", (e) => {
       if (e.payload !== id || !alive) return;
