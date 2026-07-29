@@ -225,9 +225,14 @@
   margin-top: 2px;
 }
 
+/* A goal's title is the prompt that started it, verbatim — a pasted URL or path
+   arrives as one unbreakable run, and one of those would set the list's width
+   and scroll every row sideways. Same treatment as .detail-body. */
 .goal-list {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
 }
 
 /* Fixed inner width so the collapse animation clips instead of reflowing. */
@@ -550,10 +555,20 @@
   visibility: hidden;
 }
 
-/* Fixed inner width so the collapse animation clips instead of reflowing. */
+/* Fixed inner width so the collapse animation clips instead of reflowing.
+   Everything inside is text the agent or the human wrote — a pasted path, a
+   uuid, a one-line `python3 -c '…'` — and such a run offers no place to break,
+   so one of them sets the panel's width and scrolls the whole contract
+   sideways, hiding the left edge of every other line. Break inside the run
+   instead (`anywhere`, not `break-word`: only the former lowers min-content, so
+   a long .prov button can shrink inside its flex row), and refuse the sideways
+   scroll outright as the backstop — nothing here is meant to be read by
+   panning. */
 .detail-body {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
   padding: 14px 18px 60px;
   width: min(var(--detail-w), 60vw);
   transition:
