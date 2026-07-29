@@ -176,6 +176,14 @@ export default function App() {
   // what makes the levers that only work on a future stop dishonest there.
   const [goneFor, setGoneFor] = useState<string | null>(null);
 
+  // Every goal id this pane has already listed. A goal appears in exactly one
+  // way — a human issued it (in auto mode, the first prompt of a session in
+  // Witnos's own terminal creates one) — so an id that was not here a moment ago
+  // is the thing they just did, and selecting it is what they would click next.
+  // Null until the first poll answers: at launch every goal is new to this ref,
+  // and none of them is new to the human.
+  const seen = useRef<Set<string> | null>(null);
+
   // Which evidence the user is looking at right now — the honest source of
   // the origin instrumentation (the strong-bet (b) signal).
   const [viewing, setViewing] = useState<string | null>(null);
@@ -187,12 +195,37 @@ export default function App() {
   const [editClaim, setEditClaim] = useState("");
   const [editCheck, setEditCheck] = useState("");
 
+  const selectGoal = useCallback((id: string) => {
+    setSel(id);
+    setSelProject(null);
+    setGoal(null);
+    setViewing(null);
+    setEditing(null);
+  }, []);
+
   const refresh = useCallback(async () => {
     try {
-      setGoals(await api.listGoals());
+      const list = await api.listGoals();
+      setGoals(list);
       setProjects(await api.listAutoProjects());
-      if (sel) {
-        const g = await api.getGoal(sel);
+      // Newest first (the store sorts by creation), so the freshest issuance
+      // wins if a poll ever catches two at once.
+      const fresh = seen.current
+        ? list.find((g) => !seen.current!.has(g.id))
+        : undefined;
+      seen.current = new Set(list.map((g) => g.id));
+      if (fresh) {
+        // Selecting a row the sidebar isn't showing would be a selection the
+        // human can't see.
+        setShowArchive(false);
+        selectGoal(fresh.id);
+      }
+      // The one just selected, not the one selected when this poll started:
+      // `sel` is a render old here, and loading the goal we are leaving would
+      // paint the wrong contract until the next beat.
+      const want = fresh?.id ?? sel;
+      if (want) {
+        const g = await api.getGoal(want);
         setGoal(g);
         // Sampled on this beat rather than during render: the probe reads live
         // refs that a working agent churns constantly (see paneActivity), and
@@ -205,7 +238,7 @@ export default function App() {
     } catch (e) {
       setErr({ text: String(e), poll: true });
     }
-  }, [sel]);
+  }, [sel, selectGoal]);
 
   /** An error the human caused by clicking something: stays until dismissed. */
   const failed = (e: unknown) => setErr({ text: String(e), poll: false });
@@ -290,14 +323,6 @@ export default function App() {
     saveTheme(v);
     setTheme(v);
     setAppearance(resolveAppearance(v));
-  };
-
-  const selectGoal = (id: string) => {
-    setSel(id);
-    setSelProject(null);
-    setGoal(null);
-    setViewing(null);
-    setEditing(null);
   };
 
   const selectProject = (dir: string) => {
