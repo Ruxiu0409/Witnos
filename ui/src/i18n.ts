@@ -95,7 +95,6 @@ const ORIGIN_ZH: Record<string, string> = {
 
 const en = {
   // sidebar
-  watchingNone: "watching nothing",
   watchingCount: (n: number) => `watching ${n} goal${n > 1 ? "s" : ""}`,
   // Read aloud for the eye on a goal row: the only icon in the UI whose
   // meaning no text beside it repeats.
@@ -228,7 +227,6 @@ export type Messages = typeof en;
 
 const zhHant: Messages = {
   // sidebar
-  watchingNone: "未監看任何目標",
   watchingCount: (n) => `正在監看 ${n} 個目標`,
   watchingMark: "監看中",
   expandSidebar: "展開側欄",

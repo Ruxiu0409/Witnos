@@ -784,11 +784,12 @@ export default function App() {
         <header>
           <div className="sidebar-title">
             <h1>witnos</h1>
-            <div className="watching">
-              {watchingCount > 0
-                ? t.watchingCount(watchingCount)
-                : t.watchingNone}
-            </div>
+            {/* Only the armed state earns a line here: "watching N goals" is
+                what explains a deliberate stall. Its absence says nothing is
+                watched — spelling that out was chrome for the empty case. */}
+            {watchingCount > 0 && (
+              <div className="watching">{t.watchingCount(watchingCount)}</div>
+            )}
           </div>
         </header>
         <div className="goal-list">
