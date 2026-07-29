@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, MouseEvent } from "react";
 import * as api from "./api";
 import TerminalPanel from "./TerminalPanel";
 import ResizeHandle, { type WidthSpec } from "./ResizeHandle";
@@ -197,6 +197,67 @@ export default function App() {
     </button>
   );
 
+  // Collapsible project groups (Finder-like): clicking the project row
+  // selects it (terminal cwd) and folds/unfolds its goals. Folded dirs
+  // persist across launches.
+  const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(() => {
+    try {
+      return new Set<string>(
+        JSON.parse(localStorage.getItem("witnos.collapsed_projects") ?? "[]"),
+      );
+    } catch {
+      return new Set<string>();
+    }
+  });
+  const toggleDir = (dir: string) => {
+    setCollapsedDirs((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(dir)) next.add(dir);
+      localStorage.setItem(
+        "witnos.collapsed_projects",
+        JSON.stringify([...next]),
+      );
+      return next;
+    });
+  };
+
+  const projGroup = (
+    dir: string,
+    dirGoals: api.GoalSummary[],
+    onCtxMenu?: (e: MouseEvent<HTMLButtonElement>) => void,
+    meta?: string,
+  ) => {
+    const folded = collapsedDirs.has(dir);
+    // A folded group must not swallow the "awaiting your ruling" signal
+    // (principle 6): the dot climbs up to the project row.
+    const needsDot =
+      folded && dirGoals.some((g) => g.status === "awaiting_rulings");
+    return (
+      <div key={dir} className="proj-group">
+        <button
+          className={`goal-row ${selProject === dir ? "sel" : ""}`}
+          title={dir}
+          aria-expanded={!folded}
+          onClick={() => {
+            selectProject(dir);
+            toggleDir(dir);
+          }}
+          onContextMenu={onCtxMenu}
+        >
+          <span className="goal-title proj-line">
+            <span aria-hidden="true">{folded ? "📁" : "📂"}</span>
+            <span className="proj-name">{basename(dir)}</span>
+            {needsDot && (
+              <span className="needs-dot right" title={t.needsRulingDot} />
+            )}
+          </span>
+          {meta && <span className="goal-meta">{meta}</span>}
+        </button>
+        {!folded && dirGoals.map((g) => goalRow(g, true))}
+      </div>
+    );
+  };
+
   const removeGoal = (g: api.GoalSummary) =>
     setConfirmBox({
       message: t.confirmDeleteGoal(g.title),
@@ -379,36 +440,16 @@ export default function App() {
               {(projects.length > 0 || extraDirs.length > 0) && (
                 <div className="archive-head">{t.projectsHeading}</div>
               )}
-              {projects.map((p) => (
-                <div key={p.dir} className="proj-group">
-                  <button
-                    className={`goal-row ${selProject === p.dir ? "sel" : ""}`}
-                    title={p.dir}
-                    onClick={() => selectProject(p.dir)}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setMenu({ x: e.clientX, y: e.clientY, project: p });
-                    }}
-                  >
-                    <span className="goal-title">📁 {basename(p.dir)}</span>
-                  </button>
-                  {(goalsByDir.get(p.dir) ?? []).map((g) => goalRow(g, true))}
-                </div>
-              ))}
-              {extraDirs.map((dir) => (
-                <div key={dir} className="proj-group">
-                  <button
-                    className={`goal-row ${selProject === dir ? "sel" : ""}`}
-                    title={dir}
-                    onClick={() => selectProject(dir)}
-                  >
-                    <span className="goal-title">📁 {basename(dir)}</span>
-                    <span className="goal-meta">{t.projectNotWatched}</span>
-                  </button>
-                  {goalsByDir.get(dir)!.map((g) => goalRow(g, true))}
-                </div>
-              ))}
+              {projects.map((p) =>
+                projGroup(p.dir, goalsByDir.get(p.dir) ?? [], (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setMenu({ x: e.clientX, y: e.clientY, project: p });
+                }),
+              )}
+              {extraDirs.map((dir) =>
+                projGroup(dir, goalsByDir.get(dir)!, undefined, t.projectNotWatched),
+              )}
               <button className="ghost watch-project" onClick={watchProject}>
                 {t.watchProjectAuto}
               </button>

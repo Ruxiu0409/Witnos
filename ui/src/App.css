@@ -329,6 +329,25 @@
   vertical-align: middle;
 }
 
+/* Project rows lay out as a flex line so the aggregated ruling dot of a
+   folded group can sit at the right edge. */
+.goal-title.proj-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.proj-line .proj-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.needs-dot.right {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
 .watch-project {
   display: block;
   width: calc(100% - 20px);
@@ -721,6 +740,7 @@
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-size: 11.5px;
   padding: 2px 8px;
+  text-align: left;
 }
 
 /* ---------- ruling / add ---------- */
