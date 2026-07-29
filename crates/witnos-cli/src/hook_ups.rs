@@ -7,6 +7,12 @@
 //! Fails OPEN everywhere. Crucially, a failed goal-creation does NOT mark
 //! the session as instructed — the next prompt retries, healing transient
 //! core outages. The Stop gate is the only fail-closed point.
+//!
+//! "Once per session" is really "once per goal": the mark records WHICH goal a
+//! session was told about, so a session whose goal a human deleted binds a new
+//! one on its next prompt instead of running unwatched (and unreleasable) for
+//! the rest of its life. A goal the human merely opted out of stays opted out —
+//! the get-or-create hands it back unwatched and the hook stays silent.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -14,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::paths::{self, Resolution};
@@ -51,26 +57,38 @@ fn try_run() -> Option<()> {
     let marker = paths::read_marker(&marker_path)?;
 
     let instructed_path = root.join(paths::INSTRUCTED_REL);
-    let mut instructed: HashMap<String, u64> = std::fs::read_to_string(&instructed_path)
+    let mut instructed: HashMap<String, Instructed> = std::fs::read_to_string(&instructed_path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
-    if instructed.contains_key(&session) {
-        return Some(()); // already instructed; deltas travel via PostToolUse
-    }
+    let prior = instructed.get(&session).cloned();
+    let prior_goal = prior.as_ref().and_then(Instructed::goal_id);
 
     let injection = match marker.resolve(Some(&session)) {
-        Resolution::Entry(entry) => existing_goal(&entry.goal_id, entry.contract_version, &session),
+        // Already told about THIS goal: stay quiet — from here on the
+        // contract's changes reach the agent as deltas via PostToolUse.
+        Resolution::Entry(entry) if told_about(prior.as_ref(), &entry.goal_id) => return Some(()),
+        Resolution::Entry(entry) => {
+            existing_goal(&entry.goal_id, entry.contract_version, &session, prior_goal)
+        }
         // Auto mode covers Witnos's own terminal only: a session the user
         // started in some other terminal gets no goal and no protocol, so
         // nothing about their work shows up in the app uninvited. No
         // instructed mark either — if they later relaunch inside Witnos, the
         // first prompt there still binds.
         Resolution::NoGoalAuto if !paths::in_witnos_terminal() => return Some(()),
-        Resolution::NoGoalAuto => auto_create_goal(&root, &session, input.prompt.as_deref())?,
+        // No goal for this session: it never had one, or a human took away the
+        // one it had. A new prompt is a new intention either way, so bind a
+        // goal to it — that is what keeps a deleted goal from leaving the
+        // session permanently ungated (and permanently stalled by the gate).
+        // A deliberate opt-out stays honored without a special case: the
+        // get-or-create hands back that same goal with `watching: false`.
+        Resolution::NoGoalAuto => {
+            auto_create_goal(&root, &session, input.prompt.as_deref(), prior_goal)?
+        }
         Resolution::NoGoalManual => return Some(()),
     };
-    let Some(text) = injection else {
+    let Some((goal_id, text)) = injection else {
         return Some(()); // deliberate silence (e.g. opted-out goal) — no instructed mark
     };
 
@@ -84,12 +102,53 @@ fn try_run() -> Option<()> {
         })
     );
 
-    instructed.insert(session, witnos_core::now());
+    instructed.insert(
+        session,
+        Instructed::Goal {
+            goal_id,
+            at: witnos_core::now(),
+        },
+    );
     paths::write_atomic(
         &instructed_path,
         &serde_json::to_string_pretty(&instructed).ok()?,
     );
     Some(())
+}
+
+/// What a session has already been told, keyed by session id in
+/// `.witnos/instructed.json`. Recording WHICH goal is what lets a session heal:
+/// if the goal it was told about is gone from the marker, a human removed it,
+/// and the next prompt is free to bind a new one.
+///
+/// The legacy shape (a bare timestamp, from before this was keyed by goal) still
+/// parses — there is real data on disk — and means "instructed about whatever
+/// this session is bound to now".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum Instructed {
+    Goal { goal_id: String, at: u64 },
+    Legacy(u64),
+}
+
+impl Instructed {
+    fn goal_id(&self) -> Option<&str> {
+        match self {
+            Instructed::Goal { goal_id, .. } => Some(goal_id),
+            Instructed::Legacy(_) => None,
+        }
+    }
+}
+
+/// Has this session already been handed the protocol for `goal`? A legacy entry
+/// doesn't know which goal it was, so treat it as a match — re-injecting the
+/// protocol for a goal the agent already has would be noise.
+fn told_about(prior: Option<&Instructed>, goal: &str) -> bool {
+    match prior {
+        None => false,
+        Some(Instructed::Legacy(_)) => true,
+        Some(Instructed::Goal { goal_id, .. }) => goal_id == goal,
+    }
 }
 
 fn http_agent() -> ureq::Agent {
@@ -101,7 +160,12 @@ fn http_agent() -> ureq::Agent {
 
 /// Manual / already-bound path: best-effort bind + title fetch; the
 /// injection does not depend on the core being up.
-fn existing_goal(goal_id: &str, contract_version: u64, session: &str) -> Option<String> {
+fn existing_goal(
+    goal_id: &str,
+    contract_version: u64,
+    session: &str,
+    replaces: Option<&str>,
+) -> Option<(String, String)> {
     let mut title = None;
     if let Ok(ep) = paths::read_endpoint() {
         let agent = http_agent();
@@ -127,14 +191,22 @@ fn existing_goal(goal_id: &str, contract_version: u64, session: &str) -> Option<
         Some(t) => format!("goal: \"{t}\""),
         None => format!("goal {goal_id}"),
     };
-    Some(protocol_text(&goal_line, goal_id, contract_version))
+    Some((
+        goal_id.to_string(),
+        protocol_text(&goal_line, goal_id, contract_version, replaces),
+    ))
 }
 
 /// Auto mode, unbound session: create this session's goal from the prompt.
 /// Any failure returns None WITHOUT an instructed mark → the next prompt
 /// retries. A goal that came back unwatched was deliberately opted out by
 /// the human — stay silent and never re-watch it.
-fn auto_create_goal(root: &Path, session: &str, prompt: Option<&str>) -> Option<Option<String>> {
+fn auto_create_goal(
+    root: &Path,
+    session: &str,
+    prompt: Option<&str>,
+    replaces: Option<&str>,
+) -> Option<Option<(String, String)>> {
     let ep = paths::read_endpoint().ok()?;
     let title = title_from_prompt(prompt, session);
     let resp: Value = http_agent()
@@ -161,7 +233,10 @@ fn auto_create_goal(root: &Path, session: &str, prompt: Option<&str>) -> Option<
         "goal: \"{}\" (auto-created from this prompt)",
         resp.get("title").and_then(Value::as_str).unwrap_or(&title)
     );
-    Some(Some(protocol_text(&goal_line, goal_id, version)))
+    Some(Some((
+        goal_id.to_string(),
+        protocol_text(&goal_line, goal_id, version, replaces),
+    )))
 }
 
 /// The goal title is the user's own words: first prompt, whitespace
@@ -188,13 +263,27 @@ fn title_from_prompt(prompt: Option<&str>, session: &str) -> String {
 /// it rides along with every later turn of the conversation. Every command
 /// carries the bin's absolute path (no PATH assumption) and the goal id
 /// (goal identity travels in-context, never ambiently).
-fn protocol_text(goal_line: &str, goal_id: &str, contract_version: u64) -> String {
+fn protocol_text(
+    goal_line: &str,
+    goal_id: &str,
+    contract_version: u64,
+    replaces: Option<&str>,
+) -> String {
     let bin = std::env::current_exe()
         .and_then(|p| p.canonicalize())
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| "witnos".to_string());
+    // A goal id already sits in this conversation's history when a session gets
+    // a second one, and the old one now 404s. Say so, or the agent keeps using
+    // what it read earlier.
+    let superseded = match replaces {
+        Some(old) if old != goal_id => format!(
+            " Goal {old} is gone — the user removed it; ignore that id wherever you wrote it down."
+        ),
+        _ => String::new(),
+    };
     format!(
-        "[witnos] This project is watched — {goal_line}, contract v{contract_version}. Your work here runs under a \
+        "[witnos] This project is watched — {goal_line}, contract v{contract_version}.{superseded} Your work here runs under a \
          verification contract that the user can edit WHILE you work. Protocol (all via the `witnos` CLI in Bash; \
          if `witnos` is not on PATH call it as \"{bin}\"; your goal id is {goal_id} — pass `--goal {goal_id}` \
          to every command):\n\

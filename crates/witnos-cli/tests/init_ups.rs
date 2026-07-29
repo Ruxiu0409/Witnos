@@ -463,3 +463,75 @@ fn ups_auto_respects_a_human_opt_out() {
         .expect("auto_session ownership must survive the opt-out");
     assert_eq!(owned.id, gid);
 }
+
+/// Deleting a goal is the strongest thing a human can say about it, and it used
+/// to be the harshest thing that could happen to the agent: the session lost
+/// its goal, could never bind another (once-per-session), and every Stop from
+/// then on blocked until the harness's cap killed the turn. A deletion now
+/// heals on the next prompt — a fresh goal, from the user's fresh words.
+#[test]
+fn ups_binds_a_new_goal_after_the_human_deletes_the_old_one() {
+    let project = temp_dir("aups-del");
+    let home = temp_dir("aups-del-home");
+    let core = start_auto_core(&home, &project);
+
+    let out = ups(&project, &home, "s-del", "Make the sidebar collapsible");
+    assert!(out.contains("additionalContext"), "got: {out}");
+    let first = goals_list(&core);
+    assert_eq!(first.len(), 1, "got: {first:?}");
+    let old_id = first[0]["id"].as_str().unwrap().to_string();
+
+    // What the app's delete button does (IPC-only — never on the agent's HTTP
+    // surface): drop the goal, then re-derive the project's marker.
+    let goal = core.state.store.delete_goal(&old_id).unwrap();
+    witnos_server::resync_goal_dir(&core.state, &goal);
+    assert!(goals_list(&core).is_empty(), "goal must be gone");
+
+    // The next prompt binds a new goal titled from THAT prompt…
+    let out = ups(&project, &home, "s-del", "Now fix the header");
+    assert!(out.contains("additionalContext"), "must re-instruct: {out}");
+    assert!(out.contains("Now fix the header"), "new goal, new words: {out}");
+    // …and says the old id is dead, since it still sits in the conversation.
+    assert!(out.contains(&old_id), "must name the id it replaces: {out}");
+    assert!(out.contains("is gone"), "got: {out}");
+
+    let goals = goals_list(&core);
+    assert_eq!(goals.len(), 1, "exactly one live goal: {goals:?}");
+    let new_id = goals[0]["id"].as_str().unwrap();
+    assert_ne!(new_id, old_id);
+    assert_eq!(goals[0]["watching"], true);
+
+    // The book now points at the new goal, so the next prompt stays quiet.
+    let book: Value =
+        serde_json::from_str(&std::fs::read_to_string(project.join(".witnos/instructed.json")).unwrap())
+            .unwrap();
+    assert_eq!(book["s-del"]["goal_id"], new_id, "got: {book}");
+    let out = ups(&project, &home, "s-del", "and another thing");
+    assert_eq!(out.trim(), "", "still once per goal: {out}");
+    assert_eq!(goals_list(&core).len(), 1);
+}
+
+/// A pre-v2 instructed mark (a bare timestamp — real data exists on disk) must
+/// keep meaning "already told", not re-inject on every prompt.
+#[test]
+fn ups_reads_the_legacy_instructed_mark_as_already_told() {
+    let project = temp_dir("aups-legacy");
+    let home = temp_dir("aups-legacy-home");
+    let core = start_auto_core(&home, &project);
+
+    let out = ups(&project, &home, "s-legacy", "Ship the thing");
+    assert!(out.contains("additionalContext"), "got: {out}");
+    let gid = goals_list(&core)[0]["id"].as_str().unwrap().to_string();
+
+    // Rewrite the book in the old shape, as an upgrade from an older build
+    // would leave it.
+    std::fs::write(
+        project.join(".witnos/instructed.json"),
+        r#"{"s-legacy":1785332840}"#,
+    )
+    .unwrap();
+    let out = ups(&project, &home, "s-legacy", "keep going");
+    assert_eq!(out.trim(), "", "legacy mark must still silence: {out}");
+    assert_eq!(goals_list(&core).len(), 1, "and must not duplicate the goal");
+    assert_eq!(goals_list(&core)[0]["id"], gid);
+}

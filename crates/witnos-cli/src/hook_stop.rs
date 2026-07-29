@@ -4,11 +4,14 @@
 //! `{"decision":"block", ...}`. With no armed marker it allows — that
 //! project simply isn't being watched.
 //!
-//! One session-level narrowing: a session is gated when it HAS a goal. When
-//! it has none, only sessions launched from Witnos's own terminal get the
-//! fail-closed stall — everything else is out of scope and released. Stalling
-//! a session that owns no contract protects nothing; it is pure collateral
-//! damage on whatever terminal the user happens to be working in.
+//! Two session-level narrowings, both about sessions that own no goal —
+//! stalling one protects no contract, so the stall must be earned:
+//! 1. Only sessions launched from Witnos's own terminal are in scope at all;
+//!    everything else is released, or the stall lands in whatever terminal the
+//!    user happens to be working in.
+//! 2. A session that HAD a goal which the human then removed is released. The
+//!    marker losing an entry it once had is a human act, and human choice beats
+//!    fail-closed — which is there for silent failure, not for decisions.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -97,6 +100,18 @@ pub fn run() -> ExitCode {
         // so it is released without even asking.
         Resolution::NoGoalAuto => {
             if !in_scope {
+                return ExitCode::SUCCESS;
+            }
+            // This session WAS handed a goal earlier and the marker no longer
+            // names it. The marker is a pure derivation of (registry, store),
+            // so it can only have lost the entry because a human deleted that
+            // goal or stopped watching it — deliberate choice, which beats
+            // fail-closed the same way the core already lets a merely-closed
+            // goal through. Blocking here would also be unrecoverable for the
+            // rest of the turn: nothing binds a goal until the next user
+            // prompt, so every later Stop would block too, until the harness's
+            // consecutive-block cap ends the turn.
+            if paths::was_instructed(&root, input.session_id.as_deref()) {
                 return ExitCode::SUCCESS;
             }
             json!({

@@ -130,14 +130,17 @@ pub async fn gate(State(state): State<Arc<AppState>>, Json(req): Json<GateReq>) 
     }
 }
 
-/// Auto project, session never got a goal: the core was unreachable at every
-/// prompt of this session. The reason string is the escape-hatch docs.
+/// Auto project, session never got a goal. Which is all the core knows: it
+/// cannot see why, so this must not name a cause. ("The human deleted this
+/// session's goal" looks identical from here and is answered before it reaches
+/// the core — the Stop hook releases those.) The reason string is the
+/// escape-hatch docs, so a confident wrong diagnosis costs the user the debug.
 fn no_goal_reason() -> String {
-    "[witnos] This project is auto-watched, but this session has no goal — Witnos was \
-     unreachable when your prompts were submitted. Tell the user to open the Witnos app \
-     (the next user prompt will attach a goal automatically), or to stop watching: remove \
-     the project in the app, or run `witnos disarm` in the project root. This stall is \
-     fail-closed by design."
+    "[witnos] This project is auto-watched, but this session never got a goal — most likely \
+     Witnos was not running when your prompts were submitted, or the project started being \
+     watched after this session did. Tell the user: with the Witnos app open, one more prompt \
+     attaches a goal automatically; to stop watching instead, remove the project in the app or \
+     run `witnos disarm` in the project root. This stall is fail-closed by design."
         .to_string()
 }
 

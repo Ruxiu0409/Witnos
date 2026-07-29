@@ -273,6 +273,13 @@ fn write_raw_marker(project: &Path, content: &str) {
     std::fs::write(dir.join("armed.json"), content).unwrap();
 }
 
+/// The hooks' own book of which session was told about which goal.
+fn write_instructed(project: &Path, content: &str) {
+    let dir = project.join(".witnos");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("instructed.json"), content).unwrap();
+}
+
 /// Like spawn_server, but also hands back the raw request it served.
 fn spawn_capture_server(
     status_line: &'static str,
@@ -390,6 +397,36 @@ fn stop_unbound_outside_witnos_terminal_releases() {
     write_raw_marker(&project, "{{{ not json");
     let out = run_hook("stop", &project, &home, &stdin_json(&project));
     assert_eq!(out.trim(), "", "not even a torn marker may stall it: {out}");
+}
+
+/// A session that HAD a goal, in Witnos's own terminal, whose marker entry is
+/// gone: only a human can cause that (deleting the goal, or stopping watching
+/// it), and human choice beats fail-closed. Releasing needs no core — the
+/// marker having lost an entry the hooks' own book still remembers is itself
+/// the evidence that the app re-derived it without that goal.
+#[test]
+fn stop_releases_a_session_whose_goal_the_human_removed() {
+    let project = temp_dir("v2-removed");
+    let home = temp_dir("v2-removed-home");
+    write_raw_marker(&project, r#"{"v":2,"auto":true}"#);
+    write_instructed(&project, r#"{"s1":{"goal_id":"g-deleted","at":1785332840}}"#);
+    write_endpoint(&home, dead_port());
+    let out = run_hook_from_witnos("stop", &project, &home, &stdin_json(&project));
+    assert_eq!(out.trim(), "", "a removed goal must not stall its session: {out}");
+
+    // The legacy mark (a bare timestamp, no goal id) says the same thing.
+    write_instructed(&project, r#"{"s1":1785332840}"#);
+    let out = run_hook_from_witnos("stop", &project, &home, &stdin_json(&project));
+    assert_eq!(out.trim(), "", "legacy mark must read the same: {out}");
+
+    // A DIFFERENT session in the same project never had a goal here — that is
+    // the silent-failure case fail-closed exists for, and it still blocks.
+    let other = format!(
+        r#"{{"session_id":"s-never","cwd":"{}","stop_hook_active":false}}"#,
+        project.display()
+    );
+    let out = run_hook_from_witnos("stop", &project, &home, &other);
+    assert!(out.contains(r#""decision":"block""#), "never-bound must stall: {out}");
 }
 
 /// The flip side: owning a goal is what gets you gated. A session bound in the

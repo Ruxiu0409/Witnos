@@ -68,6 +68,26 @@ pub fn in_witnos_terminal() -> bool {
     std::env::var("WITNOS_TERMINAL").is_ok_and(|v| !v.trim().is_empty())
 }
 
+/// Was this session ever handed a goal in this project? The hooks' own book
+/// (`.witnos/instructed.json`) is the record, and only key PRESENCE is read
+/// here, so both its shapes answer the question.
+///
+/// The gate needs this to tell two very different situations apart when the
+/// marker names no goal for a session: one that never had one (silent failure —
+/// exactly what fail-closed exists for) and one whose goal a human took away.
+pub fn was_instructed(root: &Path, session: Option<&str>) -> bool {
+    let Some(session) = session else {
+        return false;
+    };
+    let Ok(raw) = std::fs::read_to_string(root.join(INSTRUCTED_REL)) else {
+        return false;
+    };
+    serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()
+        .and_then(|v| v.get(session).cloned())
+        .is_some()
+}
+
 pub fn read_endpoint() -> Result<Endpoint, String> {
     let p = witnos_home().join("endpoint.json");
     let s = std::fs::read_to_string(&p).map_err(|e| format!("cannot read {}: {e}", p.display()))?;
