@@ -5,6 +5,7 @@ import * as api from "./api";
 import TerminalPanel, { type ActivityProbe } from "./TerminalPanel";
 import ResizeHandle, { type WidthSpec } from "./ResizeHandle";
 import Picker from "./Picker";
+import Icon from "./Icon";
 import { LANGS, detectLang, messages, saveLang, type Lang } from "./i18n";
 import {
   EDITOR_NAMES,
@@ -376,7 +377,12 @@ export default function App() {
       </span>
       <span className="goal-meta">
         {t.goalStatus(g.status)}
-        {g.watching ? " · 👁" : ""}
+        {g.watching && (
+          <>
+            {" · "}
+            <Icon name="eye" size={12} label={t.watchingMark} />
+          </>
+        )}
         {g.strong_bet_count > 0 ? ` · (b)×${g.strong_bet_count}` : ""}
       </span>
     </button>
@@ -430,7 +436,7 @@ export default function App() {
           onContextMenu={onCtxMenu}
         >
           <span className="goal-title proj-line">
-            <span aria-hidden="true">{folded ? "📁" : "📂"}</span>
+            <Icon name={folded ? "folder" : "folder-open"} />
             <span className="proj-name">{basename(dir)}</span>
             {needsDot && (
               <span className="needs-dot right" title={t.needsRulingDot} />
@@ -708,7 +714,7 @@ export default function App() {
             title={t.watchingCount(watchingCount)}
             data-tauri-drag-region
           >
-            👁 {watchingCount}
+            <Icon name="eye" size={12} /> {watchingCount}
           </span>
         )}
         <div className="tb-right" data-tauri-drag-region>
@@ -720,7 +726,7 @@ export default function App() {
                 title={needsNote}
                 data-tauri-drag-region
               >
-                ⚖ {needsYou.length}
+                <Icon name="scale" size={12} /> {needsYou.length}
               </span>
             )}
           {workspaceView !== "settings" && sel && (
@@ -853,7 +859,7 @@ export default function App() {
             aria-label={showArchive ? t.hideArchive : t.showArchive}
             aria-pressed={showArchive}
           >
-            <span className="settings-icon">🗃</span>
+            <Icon name="archive" />
             <span className="settings-label">
               {t.archive}
               {archivedGoals.length > 0 ? ` (${archivedGoals.length})` : ""}
@@ -870,7 +876,7 @@ export default function App() {
             aria-label={t.settings}
             aria-pressed={workspaceView === "settings"}
           >
-            <span className="settings-icon">⚙</span>
+            <Icon name="settings" />
             <span className="settings-label">{t.settings}</span>
           </button>
         </div>
@@ -1014,11 +1020,11 @@ export default function App() {
               <span className="settings-title">{t.settings}</span>
               <span className="spacer" />
               <button
-                className="ghost"
+                className="ghost icon"
                 onClick={() => setWorkspaceView("terminal")}
                 aria-label={t.closeSettings}
               >
-                ✕
+                <Icon name="x" />
               </button>
             </header>
             <div className="settings-body">
@@ -1205,7 +1211,7 @@ export default function App() {
                                     aria-label={t.waive}
                                     onClick={() => setWaived(item, true)}
                                   >
-                                    ✕
+                                    <Icon name="x" size={12} />
                                   </button>
                                 </>
                               ))}
@@ -1289,11 +1295,21 @@ export default function App() {
                                         drill(item, ev, p);
                                       }}
                                     >
+                                      <Icon
+                                        name={
+                                          p.kind === "file"
+                                            ? "file-text"
+                                            : p.kind === "url"
+                                              ? "external-link"
+                                              : "square-terminal"
+                                        }
+                                        size={12}
+                                      />{" "}
                                       {p.kind === "file"
-                                        ? `📄 ${p.path}${p.lines ? `:${p.lines}` : ""}`
+                                        ? `${p.path}${p.lines ? `:${p.lines}` : ""}`
                                         : p.kind === "url"
-                                          ? `🔗 ${p.url}`
-                                          : `$ ${p.cmd}`}
+                                          ? p.url
+                                          : p.cmd}
                                     </button>
                                   ))}
                                 </div>
@@ -1323,7 +1339,8 @@ export default function App() {
                                   title={t.sendItBackTitle}
                                   onClick={() => sendItemBack(item)}
                                 >
-                                  ✗ {t.sendItBack}
+                                  <Icon name="corner-up-left" size={12} />{" "}
+                                  {t.sendItBack}
                                 </button>
                               </div>
                             )}

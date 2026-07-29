@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import Icon from "./Icon";
 
 export interface PickerOption<V extends string> {
   value: V;
@@ -113,9 +114,7 @@ export default function Picker<V extends string>({
         aria-expanded={open}
       >
         <span>{current?.primary ?? value}</span>
-        <span className="picker-chevron" aria-hidden>
-          ⌄
-        </span>
+        <Icon name="chevron-down" size={12} className="picker-chevron" />
       </button>
       {open && (
         <div className="picker-pop">
@@ -146,9 +145,7 @@ export default function Picker<V extends string>({
                   <span className="picker-secondary">・{o.secondary}</span>
                 )}
                 {o.value === value && (
-                  <span className="picker-check" aria-hidden>
-                    ✓
-                  </span>
+                  <Icon name="check" size={12} className="picker-check" />
                 )}
               </li>
             ))}

@@ -7,6 +7,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { Messages } from "./i18n";
 import type { Appearance } from "./theme";
+import Icon from "./Icon";
 import "@xterm/xterm/css/xterm.css";
 
 // Pane keys are this component's bookkeeping and nothing else: they name a row
@@ -570,8 +571,9 @@ export default function TerminalPanel({
     if (list.length < 2) return;
     const closing = list.find((p) => p.key === key);
     if (!closing) return;
-    // ✕ is the one gesture that means "end this shell", so it is the one place
-    // that kills. Everything else — unmounting, hiding, quitting — detaches.
+    // Closing a pane is the one gesture that means "end this shell", so it is
+    // the one place that kills. Everything else — unmounting, hiding,
+    // quitting — detaches.
     killShell(closing);
     setPanes((prev) => {
       const i = prev.findIndex((p) => p.key === key);
@@ -742,7 +744,7 @@ export default function TerminalPanel({
             >
               <header className="term-head">
                 <span className="term-title" title={dir ?? undefined}>
-                  <span aria-hidden="true">📂</span> {label}
+                  <Icon name="folder-open" size={12} /> {label}
                 </span>
                 {dir && <span className="term-cwd">{dir}</span>}
                 <span className="spacer" />
@@ -752,12 +754,12 @@ export default function TerminalPanel({
                     onClick={() => restart(p.key)}
                     title={cwd}
                   >
-                    ↻ {t.restartHere}
+                    <Icon name="rotate-cw" size={12} /> {t.restartHere}
                   </button>
                 )}
                 {p.exited && (
                   <button className="ghost" onClick={() => restart(p.key)}>
-                    ↻ {t.restartShell}
+                    <Icon name="rotate-cw" size={12} /> {t.restartShell}
                   </button>
                 )}
                 <button
@@ -767,7 +769,7 @@ export default function TerminalPanel({
                   aria-label={t.splitBelow}
                   aria-keyshortcuts="Meta+D"
                 >
-                  ＋
+                  <Icon name="plus" size={12} />
                 </button>
                 {multi && (
                   <button
@@ -776,7 +778,7 @@ export default function TerminalPanel({
                     title={t.closePane}
                     aria-label={t.closePane}
                   >
-                    ✕
+                    <Icon name="x" size={12} />
                   </button>
                 )}
               </header>

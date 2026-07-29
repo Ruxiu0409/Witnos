@@ -815,6 +815,23 @@
   padding: 2px 6px;
 }
 
+/* Icons draw themselves on whatever colour the text around them is (see
+   Icon.tsx), so all that is left here is geometry: never stretch or shrink in
+   a flex row, and sit on the baseline of the label being annotated. Matched
+   on the element so it can't collide with .ghost.icon, which marks the
+   BUTTON holding one. */
+svg.icon {
+  flex: 0 0 auto;
+  vertical-align: -0.15em;
+}
+
+/* The title bar is dragged by whatever sits under the pointer, and an icon in
+   it is decoration, not a handle — let the press fall through to the drag
+   region behind it. */
+[data-tauri-drag-region] svg.icon {
+  pointer-events: none;
+}
+
 .edit-form {
   display: flex;
   flex-direction: column;
@@ -998,9 +1015,11 @@ body.row-resizing * {
   max-width: 45%;
 }
 
-/* Ghost buttons carrying one glyph (the terminal's ＋/✕, an item's waive ✕):
-   square, quiet, and only as wide as the glyph. */
+/* Ghost buttons whose whole content is one icon (the terminal's split and
+   close, an item's waive): square, quiet, and only as wide as the icon. */
 .ghost.icon {
+  display: inline-flex;
+  align-items: center;
   padding: 0 5px;
   line-height: 1.5;
   font-size: 12px;
@@ -1110,8 +1129,6 @@ body.row-resizing * {
 
 .picker-chevron {
   color: var(--dim);
-  line-height: 1;
-  transform: translateY(-2px);
 }
 
 .picker-pop {
