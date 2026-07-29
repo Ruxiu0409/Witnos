@@ -635,15 +635,15 @@
   text-align: center;
 }
 
+.goal-head {
+  /* The gap the subtitle used to leave between the title and whatever the
+     contract opens with — a banner, or the first item. */
+  margin-bottom: 12px;
+}
+
 .goal-head h2 {
   font-size: 17px;
   color: var(--text-strong);
-}
-
-.goal-sub {
-  color: var(--dim);
-  font-size: 12px;
-  margin: 4px 0 8px;
 }
 
 .danger {

@@ -1091,12 +1091,14 @@ export default function App() {
                 </div>
               ) : (
                 <>
+                  {/* Title only. The status is on the row in the sidebar, and
+                      the two states that actually change what this pane means —
+                      closed, and the session gone — say so in a banner right
+                      below. The project directory is the folder you picked to
+                      get here; repeating the absolute path bought nothing but a
+                      line of noise above the contract. */}
                   <header className="goal-head">
                     <h2>{goal.title}</h2>
-                    <div className="goal-sub">
-                      {t.goalStatus(goal.status)}
-                      {goal.project_dir ? ` · ${goal.project_dir}` : ""}
-                    </div>
                   </header>
 
                   {goal.status === "closed" && (
