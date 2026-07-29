@@ -136,6 +136,13 @@ pub async fn start(home: &Path) -> Result<ServerHandle, Box<dyn std::error::Erro
         registry: ProjectRegistry::load(home),
     });
 
+    // Nothing has a pane yet, so every goal whose session ran in one of Witnos's
+    // own terminals lost its agent when the previous run ended — account those
+    // turns now, before a hook can read a `running` status that would never
+    // change again. Sessions with no pane recorded are left alone (see the store
+    // method): Witnos didn't spawn those shells and can't know they died.
+    state.store.account_ended_panes();
+
     // Re-arm watched dirs: an app restart must restore their markers
     // (a crash left them in place — correctly — and a graceful stop removed
     // them while keeping `watching` / the registry entry durable).

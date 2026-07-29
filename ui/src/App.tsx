@@ -80,6 +80,24 @@ function livePane(goal: api.Goal): number | null {
   );
 }
 
+// Is this goal's agent gone for good? Liveness is computed, never stored: a goal
+// is reachable exactly while one of the panes it recorded still exists in THIS
+// app with a live shell. A recorded pane was one of our own terminals, so once it
+// is gone so is the session — and a Claude Code session id never comes back
+// (/clear and resume both mint a new one, which by design gets its own goal).
+//
+// Two deliberate asymmetries. A goal with NO pane recorded answers false: that
+// session came from a shell Witnos never spawned and may be alive right now.
+// And every pane must be gone, not just the newest one livePane picks for
+// sending — both rules err the same way, toward not declaring a live run dead.
+function sessionGone(goal: api.Goal, probe: ActivityProbe | null): boolean {
+  const panes = goal.sessions
+    .map((s) => s.pane)
+    .filter((p): p is number => p !== null && p !== undefined);
+  if (!probe || panes.length === 0) return false;
+  return panes.every((p) => probe(p) === "gone");
+}
+
 export default function App() {
   const [goals, setGoals] = useState<api.GoalSummary[]>([]);
   const [projects, setProjects] = useState<api.ProjectSummary[]>([]);
@@ -144,6 +162,10 @@ export default function App() {
   const bindActivity = useCallback((probe: ActivityProbe | null) => {
     paneActivity.current = probe;
   }, []);
+  // The goal we last sampled as having no live pane left (see sessionGone). Its
+  // agent is unreachable for good, which is what the detail pane has to say and
+  // what makes the levers that only work on a future stop dishonest there.
+  const [goneFor, setGoneFor] = useState<string | null>(null);
 
   // Which evidence the user is looking at right now — the honest source of
   // the origin instrumentation (the strong-bet (b) signal).
@@ -160,7 +182,16 @@ export default function App() {
     try {
       setGoals(await api.listGoals());
       setProjects(await api.listAutoProjects());
-      if (sel) setGoal(await api.getGoal(sel));
+      if (sel) {
+        const g = await api.getGoal(sel);
+        setGoal(g);
+        // Sampled on this beat rather than during render: the probe reads live
+        // refs that a working agent churns constantly (see paneActivity), and
+        // panes only appear or die on a human action anyway. Keyed by goal id
+        // because the sample lags a selection by up to one tick, and a stale
+        // "its session ended" must never be painted onto another goal.
+        setGoneFor(sessionGone(g, paneActivity.current) ? g.id : null);
+      }
       setErr((prev) => (prev?.poll ? null : prev));
     } catch (e) {
       setErr({ text: String(e), poll: true });
@@ -538,15 +569,26 @@ export default function App() {
         (i) => i.class.kind === "subjective" && itemStatus(i.status) === "laid",
       )
     : [];
+  // The selected goal's agent session has ended. A closed goal already says the
+  // stronger version of this, so it keeps that banner and this one stays quiet.
+  const ended = !!goal && goal.status !== "closed" && goneFor === goal.id;
+  // Every lever that only bites on a future stop is dishonest here, so the copy
+  // that offers one changes with it: there is no next stop to block.
+  const needsNote = ended
+    ? t.needsBannerEnded(needsYou.length)
+    : t.needsBanner(needsYou.length);
   // An edit of the human's own that the agent hasn't read. Not `contract_version`:
   // the agent bumps that itself every time it lays items, before it reconciles,
   // so keying on it made the banner appear during ordinary mid-run work — noise
   // by principle 4, and noise that cries wolf about the one thing the banner
   // exists to say. The gate catches these at the agent's next stop anyway; this
-  // is only what makes the "or reach it now" offer appear.
+  // is only what makes the "or reach it now" offer appear — which is also why a
+  // goal whose session is gone shows nothing: both halves of what it promises
+  // (the gate will block, or you can reach the agent now) would be untrue.
   const unsynced =
     !!goal &&
     goal.status !== "closed" &&
+    !ended &&
     goal.last_human_edit_version > goal.agent_synced_version;
 
   const originNote = viewing
@@ -627,7 +669,7 @@ export default function App() {
             needsYou.length > 0 && (
               <span
                 className="tb-count needs"
-                title={t.needsBanner(needsYou.length)}
+                title={needsNote}
                 data-tauri-drag-region
               >
                 ⚖ {needsYou.length}
@@ -1025,10 +1067,14 @@ export default function App() {
                   {goal.status === "closed" && (
                     <div className="banner closed">{t.closedBanner}</div>
                   )}
+                  {/* The session died with its pane and no agent will read this
+                      contract again — same boundary as a closed goal (principle
+                      5), reached without anyone deciding it, so it is said in the
+                      same voice. The contract stays exactly as it is: editing and
+                      waiving still work, and re-issuing the goal is the way out. */}
+                  {ended && <div className="banner ended">{t.endedBanner}</div>}
                   {needsYou.length > 0 && (
-                    <div className="banner needs">
-                      {t.needsBanner(needsYou.length)}
-                    </div>
+                    <div className="banner needs">{needsNote}</div>
                   )}
                   {/* The gap it reports is the one the agent has to close —
                       the whole contract, not just the human's last edit — which
@@ -1218,10 +1264,16 @@ export default function App() {
                           {/* No approve button: the agent's work is presumed
                               correct, so the human only acts on disagreement —
                               and the note has to say the agent isn't waiting,
-                              or the row reads as a verdict being demanded. */}
+                              or the row reads as a verdict being demanded.
+                              Gone with the session, too: sending an item back
+                              does its whole work at a stop that will never come,
+                              so offering it would be theatre. Edit and waive
+                              stay — the contract is still worth curating, not
+                              least when re-issuing the goal is the next move. */}
                           {item.class.kind === "subjective" &&
                             ["laid", "rejected"].includes(st) &&
-                            goal.status !== "closed" && (
+                            goal.status !== "closed" &&
+                            !ended && (
                               <div className="ruling">
                                 <span className="ruling-note">
                                   {t.rulingNote}

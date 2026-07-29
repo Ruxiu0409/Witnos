@@ -59,8 +59,14 @@ const MIN_PANE_PX = 84;
 
 /** What the program in a pane is doing, as far as its title lets us tell.
  *  `unknown` is a first-class answer, not a failure: whoever asks must treat it
- *  as "go ahead", never as a reason to withhold something from the agent. */
-export type PaneActivity = "working" | "idle" | "unknown";
+ *  as "go ahead", never as a reason to withhold something from the agent.
+ *
+ *  `gone` is the one answer that is NOT about state: there is no such pane in
+ *  this app any more, or its shell is dead. It used to be folded into `unknown`,
+ *  which made "the title is unfamiliar" and "the agent this goal is bound to no
+ *  longer exists" indistinguishable — and the second one is permanent, since a
+ *  Claude Code session id never comes back. Only `gone` means unreachable. */
+export type PaneActivity = "working" | "idle" | "unknown" | "gone";
 
 /** Ask by shell id — the id the core knows a pane by (WITNOS_PANE, and the
  *  `pane` recorded on a goal's session), not the React-side pane key. */
@@ -87,7 +93,9 @@ type PaneApi = {
    *  instead of being hoisted: a restart must get a fresh one. */
   shellId: number;
   focus: () => void;
-  /** Move this shell to `dir`; resolves false if it was busy (nothing sent). */
+  /** Move this shell to `dir`; resolves false if it was busy (nothing sent).
+   *  On success the pane clears its own viewport once the cd has landed, so
+   *  the human doesn't arrive to the `cd` we typed for them. */
   tryCd: (dir: string) => Promise<boolean>;
 };
 
@@ -180,10 +188,48 @@ function TerminalView({
     fit.fit();
     termRef.current = term;
     fitRef.current = fit;
+    // Handing the pane over after a `cd` means not showing the human the `cd`
+    // itself. The emulator clears its own viewport for that — no keystroke to
+    // the shell, so it costs nothing from whatever shell the pane happens to
+    // run, and nothing lands in that shell's command history.
+    //
+    // Keep the scrollback: `term.clear()` drops the buffer, and the history is
+    // what this whole path preserves by walking the shell over instead of
+    // restarting it. So push the prompt row to the top of the viewport instead
+    // — newlines to scroll it up there, then the cursor back onto it, at the
+    // column the shell believes it is in. What was above stays scrollable.
+    const clearViewport = () => {
+      const n = term.rows - 1;
+      if (n > 0) term.write("\n".repeat(n) + `\x1b[${n}A`);
+    };
+    // "After the cd lands" is known only to the output stream: the echo, the
+    // cd, and the new prompt arrive as a couple of chunks, so wait out a short
+    // silence after the last of them. A shell that keeps printing (a chpwd
+    // hook, say) runs past the deadline and is left alone — clearing the top
+    // off output the human may want to read is the worse mistake.
+    let deadline: number | null = null;
+    let quiet: ReturnType<typeof setTimeout> | null = null;
+    const settle = () => {
+      if (deadline === null) return;
+      if (quiet) clearTimeout(quiet);
+      quiet = setTimeout(() => {
+        quiet = null;
+        if (deadline === null) return;
+        deadline = null;
+        clearViewport();
+      }, 120);
+    };
     bindApi(paneKey, {
       shellId: id,
       focus: () => term.focus(),
-      tryCd: (dir) => invoke<boolean>("term_try_cd", { id, dir }),
+      tryCd: async (dir) => {
+        const moved = await invoke<boolean>("term_try_cd", { id, dir });
+        if (moved) {
+          deadline = Date.now() + 1500;
+          settle(); // a shell that prints nothing at all still gets cleared
+        }
+        return moved;
+      },
     });
 
     let alive = true;
@@ -212,7 +258,15 @@ function TerminalView({
     });
 
     const unOut = listen<{ id: number; data: number[] }>("term:output", (e) => {
-      if (e.payload.id === id) term.write(new Uint8Array(e.payload.data));
+      if (e.payload.id !== id) return;
+      term.write(new Uint8Array(e.payload.data));
+      if (deadline !== null && Date.now() > deadline) {
+        deadline = null; // still talking: not our screen to clear
+        if (quiet) clearTimeout(quiet);
+        quiet = null;
+      } else {
+        settle();
+      }
     });
     const unExit = listen<number>("term:exit", (e) => {
       if (e.payload !== id || !alive) return;
@@ -234,6 +288,7 @@ function TerminalView({
 
     return () => {
       alive = false;
+      if (quiet) clearTimeout(quiet);
       bindApi(paneKey, null);
       ro.disconnect();
       unOut.then((f) => f());
@@ -322,14 +377,15 @@ export default function TerminalPanel({
   // Answered from the title this panel already tracks, at the moment someone
   // asks (see App's send-to-agent), off the same refs the keyboard handlers
   // read — so the answer is current without this being a dependency of
-  // anything. A pane whose shell died reports `unknown` rather than whatever
-  // its last title said: the title is frozen at the moment of death, and the
-  // core will answer "unbound" for that id anyway.
+  // anything. A pane this app never had, or one whose shell died, is `gone`
+  // rather than a state: its title is frozen at the moment of death, and after
+  // a restart the ids on a goal name panes from a previous run. Nothing can be
+  // typed at either, so whoever asks may say so plainly.
   const activity = useCallback<ActivityProbe>((shellId) => {
     const pane = panesRef.current.find(
       (p) => apis.current.get(p.key)?.shellId === shellId,
     );
-    if (!pane || pane.exited) return "unknown";
+    if (!pane || pane.exited) return "gone";
     return activityFromTitle(pane.title);
   }, []);
 

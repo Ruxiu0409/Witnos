@@ -648,6 +648,39 @@ impl Store {
         })
     }
 
+    /// Startup sweep: account every goal whose agent was running in one of
+    /// Witnos's OWN terminals. Those panes died with the previous run, and a
+    /// Claude Code session id never comes back (`/clear` and resume both mint a
+    /// new one, which by design gets its own goal) — so a goal left `Running`
+    /// there would stay running for ever: precisely the zombie `end_turn` above
+    /// exists to prevent, except that here its death is a certainty rather than
+    /// a guess, because no pane exists yet when this runs.
+    ///
+    /// A binding with NO pane recorded is deliberately spared: it came from a
+    /// shell Witnos did not spawn (a manual `witnos goal new` in the human's own
+    /// terminal), and that session may well still be alive. Between the two
+    /// possible mistakes, reporting a live run as ended is the worse one.
+    ///
+    /// Not a one-way door: the gate firing again flips the goal back to
+    /// `Running` (see `record_gate_decision`), which is what a resume does.
+    pub fn account_ended_panes(&self) {
+        // Ids collected under the read lock, which is dropped before `end_turn`
+        // takes the write one — this RwLock is not reentrant.
+        let lost: Vec<GoalId> = self
+            .read()
+            .values()
+            .filter(|g| {
+                g.status == GoalStatus::Running && g.sessions.iter().any(|s| s.pane.is_some())
+            })
+            .map(|g| g.id.clone())
+            .collect();
+        for id in lost {
+            // Fail-open bookkeeping, like the SessionEnd hook's: a goal whose
+            // file won't write is not worth refusing to start over.
+            let _ = self.end_turn(&id);
+        }
+    }
+
     pub fn set_watch(
         &self,
         goal_id: &str,

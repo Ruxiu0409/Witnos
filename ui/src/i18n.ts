@@ -156,8 +156,16 @@ const en = {
   confirmCloseGoal: "Close this goal? No agent will read it anymore.",
   closedBanner:
     "This goal is closed — no agent reads this contract anymore. To change the outcome, re-issue the goal.",
+  // Same boundary as a closed goal, reached without anyone choosing it: the
+  // terminal this goal's agent ran in is gone, so nothing reads the contract
+  // anymore. Say so where the human is looking at it, or every lever on this
+  // pane silently aims at an agent that no longer exists.
+  endedBanner:
+    "This goal's agent session has ended — closing a terminal, /clear, or quitting Witnos all start a new session, and a session never comes back. No agent reads this contract anymore: you can still edit and waive items, but to change the outcome, re-issue the goal.",
   needsBanner: (n: number) =>
     `${n} subjective item${n > 1 ? "s" : ""} laid evidence for you to look at. The agent moved on and is not waiting — if you disagree, edit the item or send it back.`,
+  needsBannerEnded: (n: number) =>
+    `${n} subjective item${n > 1 ? "s" : ""} laid evidence for you to look at. Its session has ended, so nothing goes back to the agent — read it, and re-issue the goal if you disagree.`,
 
   // sending the change into the agent's own shell (Witnos owns that terminal,
   // so a correction can run now instead of waiting for the agent's next stop).
@@ -279,8 +287,12 @@ const zhHant: Messages = {
   confirmCloseGoal: "確定關閉這個目標？之後不會再有代理讀取它。",
   closedBanner:
     "此目標已關閉——不會再有代理讀取這份契約。要改變結果，請重新發布這個目標。",
+  endedBanner:
+    "這個目標的 agent session 已經結束——關掉終端機、/clear、或結束 Witnos，都會開始新的 session，而舊的 session 不會回來。不會再有代理讀取這份契約：你仍然可以編輯或豁免項目，但要改變結果，請重新發布這個目標。",
   needsBanner: (n) =>
     `${n} 個主觀項目擺好了證據等你看。代理擺完就繼續前進，不會等你——你不同意的話，就編輯這個項目或把它退回。`,
+  needsBannerEnded: (n) =>
+    `${n} 個主觀項目擺好了證據等你看。它的 session 已經結束，任何東西都送不回代理了——看完之後若你不同意，請重新發布這個目標。`,
 
   // sending the change into the agent's own shell (Witnos owns that terminal,
   // so a correction can run now instead of waiting for the agent's next stop).

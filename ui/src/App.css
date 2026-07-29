@@ -649,7 +649,10 @@
   font-size: 13px;
 }
 
-.banner.closed {
+/* Two ways to reach the same boundary — the goal was closed, or its agent
+   session died — so they read as one statement rather than two states. */
+.banner.closed,
+.banner.ended {
   background: var(--warn-bg);
   border: 1px solid var(--warn);
   color: var(--warn);

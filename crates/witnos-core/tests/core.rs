@@ -863,3 +863,82 @@ fn end_turn_accounts_only_running_goals_and_the_gate_revives() {
     assert!(!store.end_turn(&g.id).unwrap());
     assert_eq!(store.get_goal(&g.id).unwrap().status, parked);
 }
+
+/// A fresh start means no pane exists, so a goal whose session ran in one of
+/// Witnos's own panes has definitely lost its agent — account it rather than
+/// leave a goal `running` that nothing will ever come back to.
+#[test]
+fn startup_accounts_goals_whose_pane_died_with_the_app() {
+    let (store, dir) = temp_store();
+    let (ours, _) = store
+        .create_auto_goal("ran in our pane", "/proj", "s-ours", "claude-code", Some(4))
+        .unwrap();
+    // Already released: the turn is accounted, there is nothing to end.
+    let (parked, _) = store
+        .create_auto_goal("released", "/proj", "s-parked", "claude-code", Some(5))
+        .unwrap();
+    store
+        .record_gate_decision(&parked.id, GateDecisionKind::Release, None)
+        .unwrap();
+
+    store.account_ended_panes();
+    let status = |id: &str| store.get_goal(id).unwrap().status;
+    assert_eq!(status(&ours.id), GoalStatus::TurnEndedUnmet);
+    assert_eq!(status(&parked.id), GoalStatus::AwaitingRulings);
+
+    // Accounted exactly once, however many times the app is restarted.
+    let turn_ends = |id: &str| {
+        store
+            .get_goal(id)
+            .unwrap()
+            .events
+            .iter()
+            .filter(|e| matches!(e.kind, EventKind::TurnEnded { met: false }))
+            .count()
+    };
+    assert_eq!(turn_ends(&ours.id), 1);
+    store.account_ended_panes();
+    assert_eq!(turn_ends(&ours.id), 1, "a second start must not re-account it");
+
+    // Durable, and still not a one-way door: a resumed session's gate revives it.
+    drop(store);
+    let store = Store::open(&dir).unwrap();
+    assert_eq!(store.get_goal(&ours.id).unwrap().status, GoalStatus::TurnEndedUnmet);
+    store
+        .record_gate_decision(&ours.id, GateDecisionKind::Block, Some("delta".into()))
+        .unwrap();
+    assert_eq!(store.get_goal(&ours.id).unwrap().status, GoalStatus::Running);
+}
+
+/// The exclusion, pinned: a session binding with no pane came from a shell
+/// Witnos never spawned (a manual `witnos goal new` in the human's own
+/// terminal), and it may still be running right now. Declaring that one over
+/// would report a live run as ended — the one error this sweep must not make.
+#[test]
+fn startup_spares_sessions_witnos_did_not_spawn() {
+    let (store, _dir) = temp_store();
+    let (theirs, _) = store
+        .create_auto_goal("their own terminal", "/proj", "s-theirs", "claude-code", None)
+        .unwrap();
+    // Two bindings, one of them ours: our pane is gone, so the goal is stale
+    // whatever the other session is doing.
+    let (mixed, _) = store
+        .create_auto_goal("resumed here", "/proj", "s-elsewhere", "claude-code", None)
+        .unwrap();
+    store
+        .bind_session(&mixed.id, "claude-code", "s-in-pane", Some(3))
+        .unwrap();
+
+    store.account_ended_panes();
+
+    assert_eq!(
+        store.get_goal(&theirs.id).unwrap().status,
+        GoalStatus::Running,
+        "a session Witnos did not spawn must never be declared dead"
+    );
+    assert_eq!(
+        store.get_goal(&mixed.id).unwrap().status,
+        GoalStatus::TurnEndedUnmet,
+        "one recorded pane of ours is enough: that pane is gone"
+    );
+}
