@@ -96,6 +96,8 @@
 
 /* ---------- sidebar ---------- */
 
+/* Pane edges keep their hairline — the app's outer structure is drawn, the
+   content inside the panes is not. */
 .sidebar {
   width: var(--sidebar-w);
   min-width: var(--sidebar-w);
@@ -110,10 +112,12 @@
     visibility 0.18s;
 }
 
-/* Collapsed means gone: no rail, no border, no leftover strip. The pane is
-   still visible for the whole shrink (visibility flips only at the end of the
-   transition), then hidden — which also takes its controls out of tab order
-   instead of leaving them focusable inside a zero-width box. */
+/* Collapsed means gone: no rail, no border, no leftover strip (the border must
+   go to zero explicitly — under border-box it would otherwise hold the grid
+   column 1px open). The pane is still visible for the whole shrink (visibility
+   flips only at the end of the transition), then hidden — which also takes its
+   controls out of tab order instead of leaving them focusable inside a
+   zero-width box. */
 .sidebar.collapsed {
   width: 0;
   min-width: 0;
@@ -123,7 +127,6 @@
 
 .sidebar header {
   padding: 12px 10px 10px 16px;
-  border-bottom: 1px solid var(--border);
 }
 
 .sidebar-title {
@@ -236,13 +239,16 @@
   visibility: hidden;
 }
 
+/* No rules between rows, and the whole strip is the hit area: the highlight
+   runs edge to edge rather than sitting in an inset pill. Width must be
+   explicit — a button's `auto` is shrink-to-fit even at display: block, which
+   would leave the row only as wide as its title. */
 .goal-row {
   display: block;
   width: 100%;
   text-align: left;
   background: none;
   border: none;
-  border-bottom: 1px solid var(--border);
   border-radius: 0;
   padding: 10px 16px;
 }
@@ -251,9 +257,14 @@
   background: var(--panel2);
 }
 
+/* Selection has to survive without the accent bar it used to carry, so the
+   title goes accent — a filled row alone would read the same as hover. */
 .goal-row.sel {
   background: var(--panel2);
-  border-left: 3px solid var(--accent);
+}
+
+.goal-row.sel .goal-title {
+  color: var(--accent);
 }
 
 /* ---------- context menu ---------- */
@@ -323,7 +334,6 @@
   text-align: left;
   background: none;
   border: none;
-  border-top: 1px solid var(--border);
   border-radius: 0;
   color: var(--dim);
   font-size: 12px;
@@ -337,10 +347,10 @@
 
 /* ---------- projects (sidebar grouping) ---------- */
 
+/* Sections are told apart by the gap between them, not by a rule. */
 .proj-section {
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 6px;
-  margin-bottom: 6px;
+  padding-bottom: 10px;
+  margin-bottom: 4px;
 }
 
 /* Goals sit indented under their project row — belonging at a glance. */
@@ -416,7 +426,6 @@
 }
 
 .sidebar-footer {
-  border-top: 1px solid var(--border);
   padding: 8px 10px;
 }
 
@@ -443,10 +452,9 @@
 }
 
 .archive-head {
-  padding: 8px 16px;
+  padding: 10px 16px 4px;
   color: var(--dim);
   font-size: 12px;
-  border-bottom: 1px solid var(--border);
 }
 
 .list-empty {
