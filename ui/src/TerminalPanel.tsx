@@ -1,10 +1,12 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { Terminal } from "@xterm/xterm";
+import type { ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { Messages } from "./i18n";
+import type { Appearance } from "./theme";
 import "@xterm/xterm/css/xterm.css";
 
 // Fresh ids per mount: StrictMode's mount→unmount→mount must not let two
@@ -13,12 +15,43 @@ import "@xterm/xterm/css/xterm.css";
 // pane's identity either.
 let nextId = Math.floor(Math.random() * 0x7fffffff);
 
-const THEME = {
-  background: "#14151a", // --bg
-  foreground: "#c9ccd6", // --text
-  cursor: "#7aa2f7", // --accent
-  selectionBackground: "#33364280",
+// xterm's stock ANSI set assumes a dark background: on a light one its yellow
+// and its white land near-invisible, and half of what an agent prints is
+// coloured. So light mode brings its own darkened set; dark mode keeps the
+// defaults, which were tuned for exactly that.
+const LIGHT_ANSI: ITheme = {
+  black: "#23252c",
+  red: "#c0392f",
+  green: "#2c7a39",
+  yellow: "#8a6300",
+  blue: "#2455c4",
+  magenta: "#8e3ba8",
+  cyan: "#0f7285",
+  white: "#5b6070",
+  brightBlack: "#666c7a",
+  brightRed: "#d84a3f",
+  brightGreen: "#37934a",
+  brightYellow: "#a3760a",
+  brightBlue: "#3a6fd8",
+  brightMagenta: "#a44ec0",
+  brightCyan: "#158aa0",
+  brightWhite: "#23252c",
 };
+
+/** Read off the same token block as the rest of the UI (index.css) rather than
+ *  restating the palette here — the terminal is most of the window, and two
+ *  copies of a colour is how they drift apart. */
+function terminalTheme(appearance: Appearance): ITheme {
+  const tokens = getComputedStyle(document.documentElement);
+  const v = (name: string) => tokens.getPropertyValue(name).trim();
+  return {
+    background: v("--bg"),
+    foreground: v("--text"),
+    cursor: v("--accent"),
+    selectionBackground: v("--term-sel"),
+    ...(appearance === "light" ? LIGHT_ANSI : {}),
+  };
+}
 
 // Under this a pane shows too few rows to work in; the splitter and the split
 // action both refuse to go below it rather than produce unusable slivers.
@@ -81,6 +114,7 @@ function TerminalView({
   onCwd,
   bindApi,
   t,
+  appearance,
 }: {
   paneKey: number;
   cwd: string | null;
@@ -89,6 +123,7 @@ function TerminalView({
   onCwd: (dir: string) => void;
   bindApi: (key: number, api: PaneApi | null) => void;
   t: Messages;
+  appearance: Appearance;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -103,7 +138,7 @@ function TerminalView({
     const term = new Terminal({
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
       fontSize: 13,
-      theme: THEME,
+      theme: terminalTheme(appearance),
       cursorBlink: true,
       scrollback: 5000,
     });
@@ -140,12 +175,9 @@ function TerminalView({
       return true;
     });
 
-    const unOut = listen<{ id: number; data: number[] }>(
-      "term:output",
-      (e) => {
-        if (e.payload.id === id) term.write(new Uint8Array(e.payload.data));
-      },
-    );
+    const unOut = listen<{ id: number; data: number[] }>("term:output", (e) => {
+      if (e.payload.id === id) term.write(new Uint8Array(e.payload.data));
+    });
     const unExit = listen<number>("term:exit", (e) => {
       if (e.payload !== id || !alive) return;
       term.write(`\r\n\x1b[2m${cb.current.t.shellExited}\x1b[0m\r\n`);
@@ -178,6 +210,14 @@ function TerminalView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // one shell per mount; restart = remount via key
 
+  // Repaint a live shell when the appearance changes — scrollback and all,
+  // which is why the theme is swapped on the running terminal instead of
+  // remounting it (a remount would kill the shell).
+  useEffect(() => {
+    const term = termRef.current;
+    if (term) term.options.theme = terminalTheme(appearance);
+  }, [appearance]);
+
   // Refit + refocus when the panel becomes visible again.
   useEffect(() => {
     const box = boxRef.current;
@@ -199,10 +239,12 @@ function TerminalView({
 export default function TerminalPanel({
   cwd,
   t,
+  appearance,
   hidden = false,
 }: {
   cwd: string | null;
   t: Messages;
+  appearance: Appearance;
   // Hide instead of unmount: the shells must survive workspace view switches.
   hidden?: boolean;
 }) {
@@ -230,7 +272,9 @@ export default function TerminalPanel({
   }, []);
 
   const patch = useCallback((key: number, part: Partial<Pane>) => {
-    setPanes((prev) => prev.map((p) => (p.key === key ? { ...p, ...part } : p)));
+    setPanes((prev) =>
+      prev.map((p) => (p.key === key ? { ...p, ...part } : p)),
+    );
   }, []);
 
   // A new pane opens in the selected project's directory — the same rule the
@@ -239,7 +283,9 @@ export default function TerminalPanel({
   const split = useCallback(
     (fromKey?: number) => {
       const list = panesRef.current;
-      const i = list.findIndex((p) => p.key === (fromKey ?? focusedRef.current));
+      const i = list.findIndex(
+        (p) => p.key === (fromKey ?? focusedRef.current),
+      );
       const src = list[i < 0 ? 0 : i];
       if (!src) return;
       const stack = stackRef.current;
@@ -284,7 +330,8 @@ export default function TerminalPanel({
   const focusStep = useCallback((d: number) => {
     const list = panesRef.current;
     const i = list.findIndex((p) => p.key === focusedRef.current);
-    const target = list[Math.min(list.length - 1, Math.max(0, (i < 0 ? 0 : i) + d))];
+    const target =
+      list[Math.min(list.length - 1, Math.max(0, (i < 0 ? 0 : i) + d))];
     if (!target) return;
     setFocused(target.key);
     apis.current.get(target.key)?.focus();
@@ -442,6 +489,7 @@ export default function TerminalPanel({
                 onTitle={(title) => patch(p.key, { title: title || null })}
                 onCwd={(d) => patch(p.key, { liveCwd: d })}
                 t={t}
+                appearance={appearance}
               />
             </section>
           </Fragment>

@@ -4,7 +4,14 @@
   padding: 0;
 }
 
+/* Every colour in the app comes from here. Which block wins is the `data-theme`
+   attribute on <html>, written by theme.ts before the first paint — dark is the
+   default so a missing attribute can only ever mean "the palette this was
+   designed in", never "unstyled". Panels sit one step brighter than the
+   background in both themes, so the depth reads the same way round.
+   Adding a colour: put it in BOTH blocks, never inline in a rule. */
 :root {
+  color-scheme: dark;
   --bg: #14151a;
   --panel: #1c1e26;
   --panel2: #23252f;
@@ -15,6 +22,49 @@
   --ok: #9ece6a;
   --warn: #e0af68;
   --bad: #f7768e;
+  /* Headings and claims, which sit above --text. */
+  --text-strong: #ffffff;
+  /* Tinted fills: banners, the danger row's hover, and the text that goes on
+     top of a filled ok/bad button. */
+  --ok-bg: #1f2a20;
+  --warn-bg: #2a2030;
+  --bad-bg: #2a1a1f;
+  --on-ok: #10160c;
+  --on-bad: #1c0d11;
+  /* Overlay furniture: the modal scrim, then shadows by how far the surface
+     floats (tooltip, menu, popover). */
+  --scrim: rgba(0, 0, 0, 0.55);
+  --shadow-1: rgba(0, 0, 0, 0.35);
+  --shadow-2: rgba(0, 0, 0, 0.45);
+  --shadow-3: rgba(0, 0, 0, 0.5);
+  /* The terminal's selection band — xterm wants a concrete colour, so it is a
+     token rather than --border with alpha. */
+  --term-sel: #33364280;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4f5f8;
+  --panel: #ffffff;
+  --panel2: #e9ebf1;
+  --border: #d3d7e0;
+  --text: #23252c;
+  --dim: #666c7a;
+  --accent: #2f5fd0;
+  --ok: #2c7a39;
+  --warn: #8a6300;
+  --bad: #c0392f;
+  --text-strong: #0b0d12;
+  --ok-bg: #e6f2e8;
+  --warn-bg: #fbf1de;
+  --bad-bg: #fbe9e7;
+  --on-ok: #f6fbf6;
+  --on-bad: #fff6f5;
+  --scrim: rgba(18, 20, 26, 0.35);
+  --shadow-1: rgba(18, 20, 26, 0.12);
+  --shadow-2: rgba(18, 20, 26, 0.16);
+  --shadow-3: rgba(18, 20, 26, 0.2);
+  --term-sel: #2f5fd033;
 }
 
 html,

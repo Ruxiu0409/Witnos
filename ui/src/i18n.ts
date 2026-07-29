@@ -110,6 +110,10 @@ const en = {
   language: "Language",
   searchLanguage: "search languages…",
   noMatches: "no matches",
+  appearance: "Appearance",
+  appearanceSystem: "system default",
+  appearanceLight: "light",
+  appearanceDark: "dark",
   openFilesWith: "Open files with",
   openFilesWithHint:
     "Evidence file pointers open here (with the line when known); links still open in the browser.",
@@ -207,6 +211,10 @@ const zhHant: Messages = {
   language: "語言",
   searchLanguage: "搜尋語言…",
   noMatches: "沒有符合的語言",
+  appearance: "外觀",
+  appearanceSystem: "系統預設",
+  appearanceLight: "淺色",
+  appearanceDark: "深色",
   openFilesWith: "檔案開啟方式",
   openFilesWithHint:
     "證據裡的檔案來源會用它開啟（有行號就跳到該行）；連結仍用瀏覽器開啟。",

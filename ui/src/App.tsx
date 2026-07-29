@@ -11,6 +11,16 @@ import {
   saveEditor,
   type Editor,
 } from "./editors";
+import {
+  applyAppearance,
+  detectTheme,
+  resolveAppearance,
+  saveTheme,
+  syncWindowTheme,
+  watchSystemAppearance,
+  type Appearance,
+  type Theme,
+} from "./theme";
 import "./App.css";
 
 function short(id: string): string {
@@ -78,6 +88,12 @@ export default function App() {
   const [showArchive, setShowArchive] = useState(false);
   const [lang, setLang] = useState<Lang>(detectLang);
   const [editor, setEditor] = useState<Editor>(detectEditor);
+  const [theme, setTheme] = useState<Theme>(detectTheme);
+  // What is painting right now. main.tsx already applied it once, before the
+  // first frame; this state is what keeps it in step afterwards.
+  const [appearance, setAppearance] = useState<Appearance>(() =>
+    resolveAppearance(theme),
+  );
   const t = messages[lang];
   const [menu, setMenu] = useState<{
     x: number;
@@ -146,6 +162,24 @@ export default function App() {
   const changeEditor = (e: Editor) => {
     saveEditor(e);
     setEditor(e);
+  };
+
+  useEffect(() => {
+    applyAppearance(appearance);
+  }, [appearance]);
+
+  // The frame follows the pinned theme, and while the preference is "system" the
+  // OS stays in charge — flipping it mid-session repaints without a restart.
+  useEffect(() => {
+    syncWindowTheme(theme);
+    if (theme !== "system") return;
+    return watchSystemAppearance(setAppearance);
+  }, [theme]);
+
+  const changeTheme = (v: Theme) => {
+    saveTheme(v);
+    setTheme(v);
+    setAppearance(resolveAppearance(v));
   };
 
   const selectGoal = (id: string) => {
@@ -568,7 +602,12 @@ export default function App() {
                 }),
               )}
               {extraDirs.map((dir) =>
-                projGroup(dir, goalsByDir.get(dir)!, undefined, t.projectNotWatched),
+                projGroup(
+                  dir,
+                  goalsByDir.get(dir)!,
+                  undefined,
+                  t.projectNotWatched,
+                ),
               )}
             </div>
           )}
@@ -720,6 +759,7 @@ export default function App() {
         <TerminalPanel
           cwd={selProject ?? goal?.project_dir ?? null}
           t={t}
+          appearance={appearance}
           hidden={workspaceView !== "terminal"}
         />
         {workspaceView === "settings" && (
@@ -750,6 +790,18 @@ export default function App() {
                       l.names[lang] !== l.native ? l.names[lang] : undefined,
                     keywords: Object.values(l.names),
                   }))}
+                />
+              </div>
+              <div className="setting-row">
+                <span>{t.appearance}</span>
+                <Picker
+                  value={theme}
+                  onChange={changeTheme}
+                  options={[
+                    { value: "system" as Theme, primary: t.appearanceSystem },
+                    { value: "light" as Theme, primary: t.appearanceLight },
+                    { value: "dark" as Theme, primary: t.appearanceDark },
+                  ]}
                 />
               </div>
               <div className="setting-row">
