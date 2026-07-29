@@ -622,9 +622,6 @@ export default function App() {
               {t.archivedHeading(archivedGoals.length)}
             </div>
           )}
-          {showArchive && archivedGoals.length === 0 && (
-            <div className="list-empty">{t.archivedNone}</div>
-          )}
           {showArchive && archivedGoals.map((g) => goalRow(g, false))}
         </div>
         {err && <div className="err">{err}</div>}

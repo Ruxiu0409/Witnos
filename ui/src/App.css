@@ -457,12 +457,6 @@
   font-size: 12px;
 }
 
-.list-empty {
-  padding: 12px 16px;
-  color: var(--dim);
-  font-size: 12px;
-}
-
 /* ---------- confirm modal ---------- */
 
 .modal-backdrop {
