@@ -72,7 +72,7 @@ fn hook_commands(settings: &Value, event: &str) -> Vec<String> {
 // ---------- init ----------
 
 #[test]
-fn init_installs_three_hooks_idempotently() {
+fn init_installs_four_hooks_idempotently() {
     let project = temp_dir("init");
     let home = temp_dir("init-home");
 
@@ -85,6 +85,8 @@ fn init_installs_three_hooks_idempotently() {
     assert_eq!(hook_commands(&s, "PostToolUse").len(), 1);
     assert_eq!(s["hooks"]["PostToolUse"][0]["matcher"], "*");
     assert_eq!(hook_commands(&s, "UserPromptSubmit").len(), 1);
+    assert_eq!(hook_commands(&s, "SessionEnd").len(), 1);
+    assert!(hook_commands(&s, "SessionEnd")[0].ends_with("hook session-end"));
 
     // Second run: no duplicates.
     let (_, e, ok) = run_bin(&["init"], &project, &home, None);
@@ -93,6 +95,7 @@ fn init_installs_three_hooks_idempotently() {
     assert_eq!(hook_commands(&s, "Stop").len(), 1, "must not duplicate");
     assert_eq!(hook_commands(&s, "PostToolUse").len(), 1);
     assert_eq!(hook_commands(&s, "UserPromptSubmit").len(), 1);
+    assert_eq!(hook_commands(&s, "SessionEnd").len(), 1);
 }
 
 #[test]

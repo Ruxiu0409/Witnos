@@ -385,3 +385,16 @@ fn delivery_silent_for_a_session_with_no_goal() {
     let out = run_hook("post-tool-use", &project, &home, &stdin_json(&project));
     assert_eq!(out.trim(), "", "no goal → nothing to deliver: {out}");
 }
+
+#[test]
+fn session_end_fails_open_when_core_dead() {
+    let project = temp_dir("se-open");
+    let home = temp_dir("se-open-home"); // no endpoint.json: core down
+    write_raw_marker(
+        &project,
+        r#"{"v":2,"auto":true,
+           "sessions":{"s1":{"goal_id":"g-mine","contract_version":1}}}"#,
+    );
+    let out = run_hook("session-end", &project, &home, &stdin_json(&project));
+    assert_eq!(out.trim(), "", "bookkeeping must fail open silently: {out}");
+}

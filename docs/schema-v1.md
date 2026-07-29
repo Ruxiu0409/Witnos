@@ -30,8 +30,9 @@
 ```
 running ──(放行條件成立，Stop 放行)──► awaiting_rulings   ← 正常終態：agent 收工、主觀項待人裁決
    │
-   ├──(回合被截斷：連續 block 上限 8、人中斷)──► turn_ended_unmet
-   │        └──(重新下目標／續跑)──► running
+   ├──(回合被截斷：連續 block 上限 8、人中斷、session 結束時仍在跑
+   │    ——SessionEnd hook 入帳，防「殭屍 running」)──► turn_ended_unmet
+   │        └──(續跑：同 session 回來再觸發守門 → 自動復活；或重新下目標)──► running
    └──(人明確收攤)──► closed        ← UI 必須明說：不再有 agent 讀這裡；要變更就重新下目標
 awaiting_rulings ──(最後一個 laid 主觀項獲人裁決)──► ruled   ← 已無任何項等人裁；仍是收攤狀態
 ruled ──(rejected 項補上新證據、回到 laid)──► awaiting_rulings
@@ -136,6 +137,7 @@ Stop 守門的 session 解析：`sessions[sid]` 有條目 → 以該 goal 問 co
 | `POST /goals/{id}/interpret`／`/evidence`／`/oracle` | 詮釋、附證據、oracle 結果回報 |
 | `POST /goals/{id}/reconcile` | `{session_id, to_version, ...}` → 更新 `agent_synced_version` |
 | `POST /goals/{id}/sessions` | 綁定 session（UserPromptSubmit hook 用，best-effort） |
+| `POST /goals/{id}/turn-ended` | SessionEnd hook 的入帳：goal 仍 `running` → `turn_ended_unmet`（否則 no-op）。記帳不是守門，fail open |
 | `POST /goals/{id}/rulings`／`/drilldown` | 人裁決、drill-down 記錄（UI 實際走 IPC；HTTP 面為完整性保留） |
 
 （goal 刪除與 auto 專案註冊表**不在** HTTP 面上——那是人的動作，只走 app IPC。）
@@ -145,8 +147,8 @@ Stop 守門的 session 解析：`sessions[sid]` 有條目 → 以該 goal 問 co
 **走同一支 headless bin 的子命令，agent 用 Bash 呼叫。** 理由：能跑 shell 指令是所有 coding agent 的最大公約數（Codex 也只有 command hook）；endpoint／token 的處理封裝在 bin 內，prompt 端完全不碰憑證；與「單一語言、單一 repo 承重」一致。MCP 之類的整合等 roadmap 第 4 步（agent-agnostic schema 抽象）時再議。
 
 Agent 面向（**全部吃 `--goal <id>`**；同專案多個 active goal 時必帶——Bash 呼叫不帶 session 身份，環境式解析會跨 session 汙染，故 goal 身份走 in-context：協議注入、delta、block reason 都印著它；marker 只解析得出唯一 goal 時可省略）：`witnos contract show [--since N]`／`witnos item lay [--blindspot]`（stdin JSON、batch；origin 由 CLI 蓋章，agent 不能自稱 user 出身）／`witnos item interpret <id>`／`witnos evidence add <item-id>`（stdin JSON，自動蓋 git workspace 指紋）／`witnos oracle report <id> --passed|--failed`／`witnos reconcile --to N`
-Hook 入口：`witnos hook stop`／`witnos hook post-tool-use`／`witnos hook user-prompt-submit`（fail open；auto 模式下無條目的新 session → `POST /goals/auto` 建目標＋注入協議；失敗不記 instructed、下個 prompt 重試。協議文字帶 bin 絕對路徑，不依賴 PATH）
-人面向：`witnos init`（把三個 hook 冪等合併進專案 `.claude/settings.json`；app 的「監看專案」會用 bundle 內的 bin 代跑）／`witnos goal new <title>`（建目標＋盯當前專案；手動流）／`witnos arm <goal-id>`／`witnos disarm`（auto 專案會提示：registry 還在，app 重啟會重新上膛；要停用去 app 移除）／`witnos status`（渲染 marker v2：auto 旗標、default goal、各 session 條目）
+Hook 入口：`witnos hook stop`／`witnos hook post-tool-use`／`witnos hook user-prompt-submit`（fail open；auto 模式下無條目的新 session → `POST /goals/auto` 建目標＋注入協議；失敗不記 instructed、下個 prompt 重試。協議文字帶 bin 絕對路徑，不依賴 PATH）／`witnos hook session-end`（fail open 的記帳：session 結束時自己名下的 goal 仍在 running → 入帳 `turn_ended_unmet`；只認 marker `sessions` 的精確條目，default goal 不受單一 session 結束影響）
+人面向：`witnos init`（把四個 hook 冪等合併進專案 `.claude/settings.json`；app 的「監看專案」會用 bundle 內的 bin 代跑）／`witnos goal new <title>`（建目標＋盯當前專案；手動流）／`witnos arm <goal-id>`／`witnos disarm`（auto 專案會提示：registry 還在，app 重啟會重新上膛；要停用去 app 移除）／`witnos status`（渲染 marker v2：auto 旗標、default goal、各 session 條目）
 
 ### bin 命名修正（對設計文件的小修）
 

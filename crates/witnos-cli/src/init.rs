@@ -1,4 +1,4 @@
-//! `witnos init` — install the three command hooks into the PROJECT-LEVEL
+//! `witnos init` — install the four command hooks into the PROJECT-LEVEL
 //! `.claude/settings.json` (not user-global: fail-closed must only ever arm
 //! projects that opted in). Idempotent merge: existing settings and foreign
 //! hooks are preserved; our entries are updated in place if the binary moved.
@@ -7,10 +7,11 @@ use std::process::ExitCode;
 
 use serde_json::{json, Value};
 
-const HOOKS: [(&str, Option<&str>, &str); 3] = [
+const HOOKS: [(&str, Option<&str>, &str); 4] = [
     ("Stop", None, "stop"),
     ("PostToolUse", Some("*"), "post-tool-use"),
     ("UserPromptSubmit", None, "user-prompt-submit"),
+    ("SessionEnd", None, "session-end"),
 ];
 
 pub fn run() -> ExitCode {

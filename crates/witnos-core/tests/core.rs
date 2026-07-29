@@ -552,3 +552,32 @@ fn parked_goal_status_derives_ruled_from_rulings() {
     let store = Store::open(&dir).unwrap();
     assert_eq!(status(&store), GoalStatus::Ruled);
 }
+
+#[test]
+fn end_turn_accounts_only_running_goals_and_the_gate_revives() {
+    let (store, _dir) = temp_store();
+    let (g, _) = store
+        .create_auto_goal("mid-run clear", "/proj", "sE", "claude-code")
+        .unwrap();
+
+    // Session ended mid-run → honest accounting.
+    assert!(store.end_turn(&g.id).unwrap());
+    assert_eq!(store.get_goal(&g.id).unwrap().status, GoalStatus::TurnEndedUnmet);
+    // Second end is a no-op.
+    assert!(!store.end_turn(&g.id).unwrap());
+
+    // The gate firing again (resume) proves the session is back.
+    store
+        .record_gate_decision(&g.id, GateDecisionKind::Block, Some("delta".into()))
+        .unwrap();
+    assert_eq!(store.get_goal(&g.id).unwrap().status, GoalStatus::Running);
+
+    // A parked goal has nothing to account — never touched.
+    store
+        .record_gate_decision(&g.id, GateDecisionKind::Release, None)
+        .unwrap();
+    let parked = store.get_goal(&g.id).unwrap().status;
+    assert_ne!(parked, GoalStatus::Running);
+    assert!(!store.end_turn(&g.id).unwrap());
+    assert_eq!(store.get_goal(&g.id).unwrap().status, parked);
+}

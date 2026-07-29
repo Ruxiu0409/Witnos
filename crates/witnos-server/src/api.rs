@@ -216,6 +216,15 @@ pub async fn create_auto_goal(
     }
 }
 
+/// A session ended while this goal was still running — account the turn
+/// (SessionEnd hook; bookkeeping, deliberately not a gate).
+pub async fn end_turn(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
+    match state.store.end_turn(&id) {
+        Ok(changed) => Json(json!({"turn_ended": changed})).into_response(),
+        Err(e) => err(e),
+    }
+}
+
 pub async fn list_goals(State(state): State<Arc<AppState>>) -> Response {
     let mut out = Vec::new();
     for id in state.store.goal_ids() {

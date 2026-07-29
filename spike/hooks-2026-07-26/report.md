@@ -38,6 +38,12 @@ UserPromptSubmit 輸入**含 `prompt` 欄位**（使用者原文）——auto �
 
 方法：scratch 目錄裝一個 `cat >> ups-input.jsonl` 的 UPS hook，`claude -p "hello witnos ups probe" --model haiku` 一發即得。
 
+**SessionEnd hook 存在且會發**（同法實測）——「session 結束時把仍在 running 的 goal 入帳 turn_ended_unmet」的依據。輸入含 `session_id`、`cwd`、`reason`（headless 結束為 `"other"`；文件另載 `"clear"`／`"logout"` 等——我們的處理不分 reason）：
+
+```json
+{"session_id":"8c77ee0f-…","cwd":"…","prompt_id":"…","hook_event_name":"SessionEnd","reason":"other"}
+```
+
 ## 殘留待驗（下次落地前）
 
 - **prompt / agent 型 hook 未測**（主觀判斷要用它）——v1 動工前補測。

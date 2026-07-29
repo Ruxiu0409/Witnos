@@ -5,6 +5,7 @@
 mod client;
 mod cmds;
 mod hook_post;
+mod hook_session_end;
 mod hook_stop;
 mod hook_ups;
 mod init;
@@ -19,6 +20,7 @@ fn main() -> ExitCode {
             Some("stop") => hook_stop::run(),
             Some("post-tool-use") => hook_post::run(),
             Some("user-prompt-submit") => hook_ups::run(),
+            Some("session-end") => hook_session_end::run(),
             _ => usage(),
         },
         Some("init") => init::run(),
@@ -56,13 +58,14 @@ fn usage() -> ExitCode {
         "witnos — the verification layer's headless CLI\n\
          \n\
          setup:\n\
-         \x20 witnos init                 install the three hooks into ./.claude/settings.json\n\
+         \x20 witnos init                 install the four hooks into ./.claude/settings.json\n\
          \x20 witnos goal new <title…> [--no-watch]   create a goal and watch this project\n\
          \n\
          hooks:\n\
          \x20 witnos hook stop                Stop gate (fails CLOSED while armed)\n\
          \x20 witnos hook post-tool-use       delivery channel (fails OPEN)\n\
          \x20 witnos hook user-prompt-submit  bind session + inject the protocol once\n\
+         \x20 witnos hook session-end         account a still-running goal as turn-ended\n\
          \n\
          agent-facing (all accept --goal <id>; required when several goals\n\
          are active — your id is in your [witnos] protocol message):\n\

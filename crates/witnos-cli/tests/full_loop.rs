@@ -348,3 +348,32 @@ fn auto_mode_gates_each_session_against_its_own_goal() {
         "watching session goals must survive the restart: {m}"
     );
 }
+
+/// Mid-run /clear (or closed terminal) must not leave a zombie "running"
+/// goal: SessionEnd accounts it, and a resumed session revives it.
+#[test]
+fn session_end_accounts_orphaned_running_goal() {
+    let home = temp_dir("se-home");
+    let project = temp_dir("se-project");
+    let core = start_core(&home);
+    witnos_server::register_project(&core.state, project.to_str().unwrap()).unwrap();
+
+    let out = ups_as("sE", "Do the thing", &project, &home);
+    assert!(out.contains("additionalContext"), "got: {out}");
+    let m: Value = serde_json::from_str(
+        &std::fs::read_to_string(project.join(".witnos/armed.json")).unwrap(),
+    )
+    .unwrap();
+    let gid = m["sessions"]["sE"]["goal_id"].as_str().unwrap().to_string();
+    assert_eq!(core.get(&format!("/goals/{gid}"))["status"], "running");
+
+    // The session ends mid-run → turn accounted, not left running.
+    let out = hook_as("session-end", "sE", &project, &home);
+    assert_eq!(out.trim(), "", "bookkeeping must be silent: {out}");
+    assert_eq!(core.get(&format!("/goals/{gid}"))["status"], "turn_ended_unmet");
+
+    // The session resumes and hits the gate again → honestly running.
+    let out = hook_as("stop", "sE", &project, &home);
+    assert!(out.contains(r#""decision":"block""#), "empty contract blocks: {out}");
+    assert_eq!(core.get(&format!("/goals/{gid}"))["status"], "running");
+}

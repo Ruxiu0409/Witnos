@@ -526,8 +526,31 @@ impl Store {
             });
             if decision == GateDecisionKind::Release {
                 goal.status = GoalStatus::AwaitingRulings;
+            } else if goal.status == GoalStatus::TurnEndedUnmet {
+                // The gate fired again → the session is demonstrably back
+                // (resume); the goal is honestly running once more.
+                goal.status = GoalStatus::Running;
             }
             Ok(())
+        })
+    }
+
+    /// A session ended while its goal was still running (mid-run /clear,
+    /// closed terminal, agent-side crash): account the turn honestly so the
+    /// UI never shows a zombie "running" goal nothing will come back to.
+    /// Only Running goals move — a released/closed goal has nothing to
+    /// account. Returns whether the status changed.
+    pub fn end_turn(&self, goal_id: &str) -> Result<bool, StoreError> {
+        self.mutate(goal_id, |goal| {
+            if goal.status != GoalStatus::Running {
+                return Ok(false);
+            }
+            goal.status = GoalStatus::TurnEndedUnmet;
+            goal.events.push(Event {
+                at: now(),
+                kind: EventKind::TurnEnded { met: false },
+            });
+            Ok(true)
         })
     }
 

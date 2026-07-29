@@ -168,6 +168,7 @@
 
 - **實作備忘：**
   - 「目標」與 Claude Code session 的綁定：用 UserPromptSubmit hook 建立／續接 goal（hook 拿得到 `session_id` 與 `prompt`——後者 2026-07-29 同版實測補證，原始樣本見 spike 報告）。auto 模式下這支 hook get-or-create 該 session 的目標（標題＝首個 prompt 壓空白截 80 字；失敗**不記** instructed → 下個 prompt 重試，短暫斷線自癒；人 opt-out 過的目標原樣回傳、永不重新 watch）。`/clear`／resume 產生新 session id → 新目標，是所選語意不是 bug。
+  - **SessionEnd hook（第四個裝進 settings 的 hook；2.1.220 實測存在，輸入含 `session_id`／`cwd`／`reason`）**：session 結束時自己名下的 goal 仍在 `running` → 入帳 `turn_ended_unmet`，側欄不再出現「沒有 agent 會回來完成」的殭屍 running 目標。純記帳、fail open；只認 marker `sessions` 的精確條目（共用的 default goal 不因單一 session 結束被翻）；同 session 續跑再觸發守門 → 自動復活成 `running`。
   - Stop hook 輸入的 `stop_hook_active` 旗標要處理，把「fail-closed 的刻意 stall」與「無限 block 迴圈」在語意上分開。
   - 長任務會經歷 context 壓縮：reconcile 時讓 agent 重讀 store 裡自己上次的詮釋，避免壓縮後重新發明一套理解。
   - 已對過官方 hooks 文件，並以 Claude Code 2.1.220 實測（2026-07-26；方法、原始記錄與可重跑的 harness 見 `spike/hooks-2026-07-26/`）：
