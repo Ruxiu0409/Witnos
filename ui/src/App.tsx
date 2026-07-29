@@ -86,7 +86,11 @@ export default function App() {
   const [sel, setSel] = useState<string | null>(null);
   const [selProject, setSelProject] = useState<string | null>(null);
   const [goal, setGoal] = useState<api.Goal | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  // Tagged by who raised it: the 1.5s poll must be able to clear its own
+  // "core unreachable" complaint the moment the core answers again, without
+  // wiping the error your last click produced — which you would otherwise
+  // never get to read.
+  const [err, setErr] = useState<{ text: string; poll: boolean } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem("witnos.sidebar_collapsed") === "1",
@@ -157,11 +161,14 @@ export default function App() {
       setGoals(await api.listGoals());
       setProjects(await api.listAutoProjects());
       if (sel) setGoal(await api.getGoal(sel));
-      setErr(null);
+      setErr((prev) => (prev?.poll ? null : prev));
     } catch (e) {
-      setErr(String(e));
+      setErr({ text: String(e), poll: true });
     }
   }, [sel]);
+
+  /** An error the human caused by clicking something: stays until dismissed. */
+  const failed = (e: unknown) => setErr({ text: String(e), poll: false });
 
   useEffect(() => {
     refresh();
@@ -270,7 +277,7 @@ export default function App() {
       selectProject(dir);
       refresh();
     } catch (e) {
-      setErr(String(e));
+      failed(e);
     }
   };
 
@@ -411,7 +418,7 @@ export default function App() {
       await api.rejectItem(goal.id, item.id, drilled.current.has(item.id));
       refresh();
     } catch (e) {
-      setErr(String(e));
+      failed(e);
     }
   };
 
@@ -421,7 +428,7 @@ export default function App() {
       await api.waiveItem(goal.id, item.id, waived);
       refresh();
     } catch (e) {
-      setErr(String(e));
+      failed(e);
     }
   };
 
@@ -455,7 +462,7 @@ export default function App() {
             : t.agentUnbound,
       );
     } catch (e) {
-      setErr(String(e));
+      failed(e);
     }
   };
 
@@ -468,7 +475,7 @@ export default function App() {
     } catch (e) {
       // An unresolvable pointer must say so — silently opening nothing is how
       // a human ends up ruling on evidence they never actually saw.
-      setErr(String(e));
+      failed(e);
     }
   };
 
@@ -748,16 +755,6 @@ export default function App() {
           )}
           {showArchive && archivedGoals.map((g) => goalRow(g, false))}
         </div>
-        {err && <div className="err">{err}</div>}
-        {notice && (
-          <button
-            className="notice"
-            onClick={() => setNotice(null)}
-            title={t.clear}
-          >
-            {notice}
-          </button>
-        )}
         <div className="sidebar-footer">
           <button
             className={`settings-btn ${showArchive ? "active" : ""}`}
@@ -800,6 +797,30 @@ export default function App() {
           onResizing={setResizing}
         />
       )}
+
+      {/* Feedback belongs to the window, not to a pane. These used to sit in the
+          sidebar, where ⌘S hid them: you could send a correction to the agent
+          and be told nothing at all. Click either one to dismiss it. */}
+      <div className="toasts" role="status" aria-live="polite">
+        {err && (
+          <button
+            className="toast bad"
+            onClick={() => setErr(null)}
+            title={t.clear}
+          >
+            {err.text}
+          </button>
+        )}
+        {notice && (
+          <button
+            className="toast"
+            onClick={() => setNotice(null)}
+            title={t.clear}
+          >
+            {notice}
+          </button>
+        )}
+      </div>
 
       {menu && (
         <div
