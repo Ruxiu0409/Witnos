@@ -447,50 +447,76 @@ export default function App() {
             <kbd>⌘S</kbd>
           </span>
         </button>
-        {workspaceView !== "settings" && (
-          <button
-            className="detail-toggle"
-            onClick={toggleDetail}
-            aria-label={detailCollapsed ? t.expandDetail : t.collapseDetail}
-            aria-expanded={!detailCollapsed}
-            aria-keyshortcuts="Meta+I"
+        {collapsed && watchingCount > 0 && (
+          <span
+            className="tb-count"
+            title={t.watchingCount(watchingCount)}
+            data-tauri-drag-region
           >
-            {/* sidebar.right in the SF Symbols style; pane filled = detail shown */}
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 16 16"
-              fill="none"
-              aria-hidden="true"
-            >
-              <rect
-                x="1.6"
-                y="2.6"
-                width="12.8"
-                height="10.8"
-                rx="2.2"
-                stroke="currentColor"
-                strokeWidth="1.2"
-              />
-              <path d="M9.8 2.6v10.8" stroke="currentColor" strokeWidth="1.2" />
-              {!detailCollapsed && (
-                <rect
-                  x="10.9"
-                  y="3.9"
-                  width="2.2"
-                  height="8.2"
-                  rx="0.9"
-                  fill="currentColor"
-                  opacity="0.55"
-                />
-              )}
-            </svg>
-            <span className="toggle-tip" aria-hidden="true">
-              {detailCollapsed ? t.expandDetail : t.collapseDetail}
-              <kbd>⌘I</kbd>
-            </span>
-          </button>
+            👁 {watchingCount}
+          </span>
         )}
+        <div className="tb-right" data-tauri-drag-region>
+          {workspaceView !== "settings" &&
+            detailCollapsed &&
+            needsYou.length > 0 && (
+              <span
+                className="tb-count needs"
+                title={t.needsBanner(needsYou.length)}
+                data-tauri-drag-region
+              >
+                ⚖ {needsYou.length}
+              </span>
+            )}
+          {workspaceView !== "settings" && (
+            <button
+              className="detail-toggle"
+              onClick={toggleDetail}
+              aria-label={detailCollapsed ? t.expandDetail : t.collapseDetail}
+              aria-expanded={!detailCollapsed}
+              aria-keyshortcuts="Meta+I"
+            >
+              {/* sidebar.right in the SF Symbols style; pane filled = detail shown */}
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="none"
+                aria-hidden="true"
+              >
+                <rect
+                  x="1.6"
+                  y="2.6"
+                  width="12.8"
+                  height="10.8"
+                  rx="2.2"
+                  stroke="currentColor"
+                  strokeWidth="1.2"
+                />
+                <path
+                  d="M9.8 2.6v10.8"
+                  stroke="currentColor"
+                  strokeWidth="1.2"
+                />
+                {!detailCollapsed && (
+                  <rect
+                    x="10.9"
+                    y="3.9"
+                    width="2.2"
+                    height="8.2"
+                    rx="0.9"
+                    fill="currentColor"
+                    opacity="0.55"
+                  />
+                )}
+              </svg>
+              <span className="toggle-tip" aria-hidden="true">
+                {detailCollapsed ? t.expandDetail : t.collapseDetail}
+                <kbd>⌘I</kbd>
+              </span>
+            </button>
+          )}
+        </div>
       </div>
 
       <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
@@ -504,11 +530,6 @@ export default function App() {
             </div>
           </div>
         </header>
-        {collapsed && watchingCount > 0 && (
-          <div className="rail-watching" title={t.watchingCount(watchingCount)}>
-            👁 {watchingCount}
-          </div>
-        )}
         <div className="goal-list">
           {!showArchive && (
             <div className="proj-section">
@@ -767,14 +788,6 @@ export default function App() {
             />
           )}
           <aside className={`detail ${detailCollapsed ? "collapsed" : ""}`}>
-            {detailCollapsed && needsYou.length > 0 && (
-              <div
-                className="rail-watching"
-                title={t.needsBanner(needsYou.length)}
-              >
-                ⚖ {needsYou.length}
-              </div>
-            )}
             <div className="detail-body">
               {!goal ? (
                 <div className="empty">

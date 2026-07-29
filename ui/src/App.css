@@ -72,8 +72,26 @@
   border-bottom: 1px solid var(--border);
 }
 
-.titlebar .detail-toggle {
+.titlebar .tb-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-left: auto;
+}
+
+/* A collapsed pane leaves nothing on screen, so the two counters it used to
+   carry move up here: "watching N goals" (what explains a deliberate armed
+   stall) and "N items awaiting your ruling" (principle 6 — the moment to rule
+   must not slip past unnoticed). Both only appear while their pane is shut. */
+.tb-count {
+  color: var(--dim);
+  font-size: 11px;
+  white-space: nowrap;
+  padding: 0 2px;
+}
+
+.tb-count.needs {
+  color: var(--accent);
 }
 
 /* ---------- sidebar ---------- */
@@ -88,12 +106,19 @@
   overflow: hidden;
   transition:
     width 0.18s ease,
-    min-width 0.18s ease;
+    min-width 0.18s ease,
+    visibility 0.18s;
 }
 
+/* Collapsed means gone: no rail, no border, no leftover strip. The pane is
+   still visible for the whole shrink (visibility flips only at the end of the
+   transition), then hidden — which also takes its controls out of tab order
+   instead of leaving them focusable inside a zero-width box. */
 .sidebar.collapsed {
-  width: 46px;
-  min-width: 46px;
+  width: 0;
+  min-width: 0;
+  border-right-width: 0;
+  visibility: hidden;
 }
 
 .sidebar header {
@@ -101,25 +126,10 @@
   border-bottom: 1px solid var(--border);
 }
 
-/* Collapsed, the wordmark is hidden anyway — drop the whole block so the
-   rail is a clean strip of icons instead of an empty bordered box. */
-.sidebar.collapsed header {
-  display: none;
-}
-
 .sidebar-title {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-  transition:
-    opacity 0.12s ease,
-    visibility 0.12s;
-}
-
-.sidebar.collapsed .sidebar-title {
-  opacity: 0;
-  visibility: hidden;
-  width: 0;
 }
 
 .sidebar-toggle,
@@ -190,14 +200,6 @@
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 0 4px;
-}
-
-.rail-watching {
-  text-align: center;
-  color: var(--dim);
-  font-size: 11px;
-  padding: 8px 0;
-  white-space: nowrap;
 }
 
 .sidebar h1 {
@@ -453,18 +455,6 @@
   font-size: 12px;
 }
 
-.sidebar.collapsed .sidebar-footer {
-  padding: 8px 4px;
-}
-
-.sidebar.collapsed .settings-btn {
-  justify-content: center;
-}
-
-.sidebar.collapsed .settings-label {
-  display: none;
-}
-
 /* ---------- confirm modal ---------- */
 
 .modal-backdrop {
@@ -513,12 +503,16 @@
   overflow: hidden;
   transition:
     width 0.18s ease,
-    min-width 0.18s ease;
+    min-width 0.18s ease,
+    visibility 0.18s;
 }
 
+/* Collapsed means gone, same as the sidebar. */
 .detail.collapsed {
-  width: 46px;
-  min-width: 46px;
+  width: 0;
+  min-width: 0;
+  border-left-width: 0;
+  visibility: hidden;
 }
 
 /* Fixed inner width so the collapse animation clips instead of reflowing. */
