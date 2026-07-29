@@ -2,8 +2,9 @@
   /* Overridden inline from React state; these are the fallbacks. */
   --sidebar-w: 280px;
   --detail-w: 440px;
-  /* The macOS title bar is 28px; matching it puts the strip's centred
-     buttons on the same line as the traffic lights. */
+  /* On macOS this must match the OS title bar, so the strip's centred
+     buttons land on the same line as the traffic lights (see .app.mac);
+     elsewhere the strip is just a toolbar and the height is ours to pick. */
   --titlebar-h: 28px;
   /* Room the traffic lights need. Zero off macOS, where the window keeps
      its own decorations and the strip is just a toolbar. */
@@ -15,7 +16,12 @@
   height: 100%;
 }
 
+/* Measured on the running window (accessibility frame of the close button):
+   the traffic lights occupy y 8..24, x 8..70 — i.e. a 32px title bar with the
+   lights centred on y 16, not the 28px of older macOS. A 28px strip puts our
+   icons 2.5px above the lights. */
 .app.mac {
+  --titlebar-h: 32px;
   --tb-lead: 76px;
 }
 
@@ -59,6 +65,9 @@
   gap: 4px;
   padding-left: var(--tb-lead);
   padding-right: 8px;
+  /* Cancels the bottom border, which would otherwise pull the centred
+     buttons half a pixel above the traffic lights. */
+  padding-top: 1px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
