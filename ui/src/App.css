@@ -25,6 +25,14 @@
   --tb-lead: 76px;
 }
 
+/* Fullscreen takes the traffic lights away, so reserving their room only
+   strands the toggle in the middle of nowhere. 10px puts the icon's glyph on
+   the sidebar's 16px content column — the wordmark and the project rows below
+   it — since the button carries 6px of its own padding. */
+.app.mac.fullscreen {
+  --tb-lead: 10px;
+}
+
 /* Dragging a pane divider: 1:1 tracking (no width transition), and keep the
    col-resize cursor everywhere — pointer capture alone doesn't pin it. */
 .app.resizing,

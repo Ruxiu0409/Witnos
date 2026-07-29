@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as api from "./api";
 import TerminalPanel from "./TerminalPanel";
 import ResizeHandle, { type WidthSpec } from "./ResizeHandle";
@@ -79,6 +80,9 @@ export default function App() {
   );
   const [detailW, setDetailW] = usePanelWidth("witnos.detail_width", DETAIL_W);
   const [resizing, setResizing] = useState(false);
+  // Fullscreen hides the traffic lights, and the strip must stop reserving
+  // room for them (see --tb-lead).
+  const [fullscreen, setFullscreen] = useState(false);
   // What the workspace (the middle pane) is showing: the terminal, or the
   // settings view. The terminal stays mounted underneath so its shell
   // session survives the switch.
@@ -153,6 +157,37 @@ export default function App() {
   useEffect(() => {
     document.documentElement.lang = lang;
   }, [lang]);
+
+  // Entering or leaving fullscreen is a resize, so one listener covers both;
+  // ask the window rather than infer it from dimensions, which can't tell
+  // fullscreen from a window merely filling the screen.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let stale = false;
+    try {
+      const win = getCurrentWindow();
+      const sync = () =>
+        win
+          .isFullscreen()
+          .then(setFullscreen)
+          .catch(() => {});
+      sync();
+      win
+        .onResized(sync)
+        .then((f) => {
+          if (stale) f();
+          else unlisten = f;
+        })
+        .catch(() => {});
+    } catch {
+      // Not running inside Tauri: the strip reserves nothing anyway (IS_MAC
+      // gates --tb-lead), so there is nothing to keep in sync.
+    }
+    return () => {
+      stale = true;
+      unlisten?.();
+    };
+  }, []);
 
   const changeLang = (l: Lang) => {
     saveLang(l);
@@ -426,7 +461,7 @@ export default function App() {
 
   return (
     <div
-      className={`app ${IS_MAC ? "mac" : ""} ${resizing ? "resizing" : ""}`}
+      className={`app ${IS_MAC ? "mac" : ""} ${fullscreen ? "fullscreen" : ""} ${resizing ? "resizing" : ""}`}
       style={
         {
           "--sidebar-w": `${sidebarW}px`,
