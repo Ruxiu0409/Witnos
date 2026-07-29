@@ -4,7 +4,11 @@
   "version": "0.1.0",
   "identifier": "dev.witnos.app",
   "build": {
-    "frontendDist": "../../ui/dist"
+    "frontendDist": "../../ui/dist",
+    "beforeBuildCommand": {
+      "cwd": "../..",
+      "script": "npm --prefix ui run build && cargo build --release -p witnos-cli && mkdir -p crates/witnos-app/binaries && cp target/release/witnos crates/witnos-app/binaries/witnos && chmod +x crates/witnos-app/binaries/witnos"
+    }
   },
   "app": {
     "windows": [

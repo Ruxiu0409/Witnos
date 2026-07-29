@@ -13,15 +13,13 @@ open_after=1
 
 cd "$ROOT/ui"
 [[ -d node_modules ]] || npm install
-npm run build
 
-# Bundle the headless `witnos` CLI into the .app (Resources/bin/witnos): the
-# hooks it installs point at that absolute path, so users never touch PATH.
-cd "$ROOT"
-cargo build --release -p witnos-cli
-mkdir -p "$ROOT/crates/witnos-app/binaries"
-cp "$ROOT/target/release/witnos" "$ROOT/crates/witnos-app/binaries/witnos"
-
+# The frontend build, the CLI build, and staging the CLI into the bundle
+# (Resources/bin/witnos — the hooks it installs point at that absolute path,
+# so users never touch PATH) all live in tauri.conf.json's beforeBuildCommand
+# now, so a bare `tauri build` produces a correct bundle too. This script used
+# to own them, which meant `tauri build` on its own silently bundled whatever
+# stale ui/dist and binaries/witnos happened to be lying around.
 cd "$ROOT/crates/witnos-app"
 "$ROOT/ui/node_modules/.bin/tauri" build
 
@@ -37,12 +35,22 @@ fi
 rm -rf "$DEST"
 ditto "$BUNDLE" "$DEST"
 
-# Resource copying may strip the exec bit — verify the bundled CLI runs.
+# Verify the bundled CLI is the one just built and actually runs. Checking the
+# exec bit alone was worthless: build.rs's old empty-file placeholder runs as an
+# empty shell script and exits 0, so "it executed" proved nothing. `cmp` is the
+# check that has teeth — it catches the placeholder, a stale copy, and a
+# resource that didn't get written, in one comparison.
 CLI="$DEST/Contents/Resources/bin/witnos"
 [[ -f "$CLI" ]] || { echo "bundled CLI missing at $CLI" >&2; exit 1; }
-chmod +x "$CLI"
-"$CLI" status >/dev/null 2>&1 || [[ $? -ne 126 && $? -ne 127 ]] || {
-  echo "bundled CLI is not executable: $CLI" >&2
+chmod +x "$CLI"  # resource copying can strip it
+cmp -s "$ROOT/target/release/witnos" "$CLI" || {
+  echo "bundled CLI is not the one just built: $CLI" >&2
+  exit 1
+}
+# `status` is the one subcommand that answers without a running core (there is
+# no --version/--help: the CLI's hand-rolled parser exits 64 on an unknown flag).
+"$CLI" status >/dev/null || {
+  echo "bundled CLI does not run: $CLI" >&2
   exit 1
 }
 echo "Installed $DEST (bundled CLI: $CLI)"
