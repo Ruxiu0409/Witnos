@@ -152,7 +152,8 @@ const en = {
   selectAGoal: "select a goal",
   goalStatus: (s: string) => GOAL_STATUS_EN[s] ?? s.replaceAll("_", " "),
   closeGoal: "close goal",
-  confirmCloseGoal: "Close this goal? No agent will read it anymore.",
+  confirmCloseGoal: (title: string) =>
+    `Close goal "${title}"? No agent will read it anymore.`,
   closedBanner:
     "This goal is closed — no agent reads this contract anymore. To change the outcome, re-issue the goal.",
   // Same boundary as a closed goal, reached without anyone choosing it: the
@@ -282,7 +283,7 @@ const zhHant: Messages = {
   selectAGoal: "選擇一個目標",
   goalStatus: (s) => GOAL_STATUS_ZH[s] ?? s.replaceAll("_", " "),
   closeGoal: "關閉目標",
-  confirmCloseGoal: "確定關閉這個目標？之後不會再有代理讀取它。",
+  confirmCloseGoal: (title) => `確定關閉目標「${title}」？之後不會再有代理讀取它。`,
   closedBanner:
     "此目標已關閉——不會再有代理讀取這份契約。要改變結果，請重新發布這個目標。",
   endedBanner:

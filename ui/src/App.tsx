@@ -443,6 +443,18 @@ export default function App() {
     );
   };
 
+  // Both live in the sidebar's context menu, on the row itself: they act on a
+  // goal, not on whatever the detail pane happens to be showing, so they name
+  // the one they mean.
+  const closeGoal = (g: api.GoalSummary) =>
+    setConfirmBox({
+      message: t.confirmCloseGoal(g.title),
+      label: t.closeGoal,
+      action: () => {
+        api.closeGoal(g.id).then(refresh).catch(failed);
+      },
+    });
+
   const removeGoal = (g: api.GoalSummary) =>
     setConfirmBox({
       message: t.confirmDeleteGoal(g.title),
@@ -915,6 +927,19 @@ export default function App() {
               top: Math.min(menu.y, window.innerHeight - 48),
             }}
           >
+            {menu.goal && menu.goal.status !== "closed" && (
+              <button
+                className="ctx-item"
+                role="menuitem"
+                onClick={() => {
+                  const g = menu.goal!;
+                  setMenu(null);
+                  closeGoal(g);
+                }}
+              >
+                {t.closeGoal}…
+              </button>
+            )}
             {menu.goal && (
               <button
                 className="ctx-item danger-item"
@@ -1071,23 +1096,6 @@ export default function App() {
                     <div className="goal-sub">
                       {t.goalStatus(goal.status)}
                       {goal.project_dir ? ` · ${goal.project_dir}` : ""}
-                    </div>
-                    <div className="goal-actions">
-                      {goal.status !== "closed" && (
-                        <button
-                          className="danger"
-                          onClick={() =>
-                            setConfirmBox({
-                              message: t.confirmCloseGoal,
-                              label: t.closeGoal,
-                              action: () =>
-                                api.closeGoal(goal.id).then(refresh),
-                            })
-                          }
-                        >
-                          {t.closeGoal}
-                        </button>
-                      )}
                     </div>
                   </header>
 

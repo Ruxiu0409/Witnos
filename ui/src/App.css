@@ -646,12 +646,6 @@
   margin: 4px 0 8px;
 }
 
-.goal-actions {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
 .danger {
   border-color: var(--bad);
   color: var(--bad);
