@@ -1,6 +1,6 @@
 # 契約 Schema v1（設計）
 
-- **日期**：2026-07-26；2026-07-29 增補 auto 模式（每 session 一目標）與 marker v2。狀態：v1 實作依據；欄位以 `crates/witnos-core` 的型別為準，本檔記「為什麼長這樣」。
+- **日期**：2026-07-26；2026-07-29 增補 auto 模式（每 session 一目標）與 marker v2，同日移除核可、加入豁免與「把修正打回代理」。狀態：v1 實作依據；欄位以 `crates/witnos-core` 的型別為準，本檔記「為什麼長這樣」。
 - **根據**：README 設計原則 1–6、〈v1 技術選型〉的中心狀態機與上膛協議、〈核心假設〉的儀表化要求。
 - **恆守**：schema 與 agent 無關（roadmap 第 4 步的前置）——Claude Code 專屬的東西（hook 名、session_id 來源）只准出現在 adapter 邊界（hook 子命令）內，不准進 schema。
 
@@ -15,7 +15,8 @@
 | `status` | enum | 見下方狀態機 |
 | `contract_version` | u64 | **單調遞增**。任何 item 的新增／修改（不論人或 agent）都 bump；證據不 bump（證據是對既有條目的填充，不是尺的變動） |
 | `agent_synced_version` | u64 | agent 最近一次 reconcile 完成時對齊到的版本 |
-| `sessions` | list | 綁定的 agent session（`{agent, session_id, bound_at}`；由 UserPromptSubmit hook 建立） |
+| `last_human_edit_version` | u64 | **只有人的動作**（新增／改尺／退回／豁免）會推到當前版；agent 自己攤項目時不動。有它才分得出「人改了東西、agent 還沒看到」與「agent 自己剛攤完、還沒 reconcile」——後者是執行中的常態，UI 不該為它跳提示（原則 4） |
+| `sessions` | list | 綁定的 agent session（`{agent, session_id, bound_at, pane?}`；由 UserPromptSubmit hook 建立。`pane` = 該 session 活在 app 內建終端機的哪個 shell（`WITNOS_PANE`，hook 繼承環境變數而得），是「把修正打回代理」的收件地址） |
 | `items` | list\<Item\> | |
 | `evidence` | list\<Evidence\> | |
 | `events` | list\<Event\> | append-only |
@@ -28,18 +29,17 @@
 **狀態機**（README「閘門的放行 ≠ 項目的通過」的落地）：
 
 ```
-running ──(放行條件成立，Stop 放行)──► awaiting_rulings   ← 正常終態：agent 收工、主觀項待人裁決
+running ──(放行條件成立，Stop 放行)──► awaiting_rulings   ← 正常終態：agent 收工、證據攤在那裡等人看
    │
    ├──(回合被截斷：連續 block 上限 8、人中斷、session 結束時仍在跑
    │    ——SessionEnd hook 入帳，防「殭屍 running」)──► turn_ended_unmet
    │        └──(續跑：同 session 回來再觸發守門 → 自動復活；或重新下目標)──► running
    └──(人明確收攤)──► closed        ← UI 必須明說：不再有 agent 讀這裡；要變更就重新下目標
-awaiting_rulings ──(最後一個 laid 主觀項獲人裁決)──► ruled   ← 已無任何項等人裁；仍是收攤狀態
-ruled ──(rejected 項補上新證據、回到 laid)──► awaiting_rulings
-awaiting_rulings / ruled ──(人收攤)──► closed
+awaiting_rulings ──(人改尺／退回／豁免 → 該 session 再跑)──► running
+awaiting_rulings ──(人收攤)──► closed
 ```
 
-收攤期間 `awaiting_rulings` ⇄ `ruled` 是 item 狀態的**純導出**（有無 `laid` 主觀項），每次 store 寫入與載入時重算——`ruled` 引入前存檔的 goal 開檔即癒合，不需人重新裁決。
+**核可已於 2026-07-29 移出 domain**（原 `ruled` 狀態隨之刪除，舊存檔以 serde alias 讀回 `awaiting_rulings`）。理由：它對 agent 零作用——放行條件本來就把「已攤」與「已核可」當同一級，所以按不按都不影響 agent 的行為；而人的預設立場是「agent 做的先當對的」，真正的槓桿是**即時改尺**（bump 版本 → 送信通道當場送達 → 守門逼它重攤）。主觀項因此不再有「通過」狀態：終態就是「證據攤著、人看過或沒看過」。Goodhart 那條線不受影響——agent 依然不能自己宣告主觀項過關，只是判準從「人點頭」換成「人沒去改」。
 
 ### Item（驗證項）
 
@@ -63,11 +63,14 @@ awaiting_rulings / ruled ──(人收攤)──► closed
 ```
 open ──(agent 攤出詮釋＋證據)──► laid
 laid ──(objective：oracle 通過，agent 自過)──► passed
-laid ──(subjective：人點頭)──► approved
-laid ──(subjective：人打槍)──► rejected ──(goal 仍 running → agent 下輪 reconcile 必須處理)──► open
+laid ──(subjective：人退回——保留這條尺，但你的證據不算過)──► rejected
+                                    ──(補上新證據)──► laid
+任何狀態 ──(人豁免：這條不必檢查)──► waived ──(人恢復檢查)──► open
 ```
 
-`rejected` 發生在 goal 已收攤（`awaiting_rulings`）時不回 `open`——那是「重新下目標」的觸發器（原則 5 的邊界），不是本輪的工作。
+`rejected` 與 `waived` 都是**人的動作，且都 bump `contract_version` 並蓋 `last_edited_version`**——這是它們與「只改狀態」的關鍵差別：bump 過的變動會進送信通道（PostToolUse 靠版本比對），所以還在跑的 agent 當場就收到，而不是等它想收工才在守門撞到。`rejected` 在守門有專屬理由字串（比一般的「未攤」更能導向正確動作）；`waived` 則被守門**完全略過**（不攔、不要求證據），因為那正是「沒人要檢查它」的意思。
+
+`rejected` 發生在 goal 已收攤（`awaiting_rulings`）時，該 session 若再被喚起就會回到 `running`；若那個 session 已經沒了（`/clear`、關掉終端機），就是「重新下目標」的觸發器（原則 5 的邊界），不是本輪的工作。
 
 **origin（每條驗證項的出身——強版假設的直接讀數）**：
 
@@ -77,7 +80,7 @@ laid ──(subjective：人打槍)──► rejected ──(goal 仍 running �
 | `user_viewing_evidence { evidence_id }` | **(b) 看著某條證據時加的——強版假設的計數器，必記是哪條證據** |
 | `user_mid_run` | (c) 執行中自發想到的 |
 | `agent_initial` | agent 初版契約攤的 |
-| `agent_blindspot` | blindspot pass 提的候選（預設主觀、待人裁決） |
+| `agent_blindspot` | blindspot pass 提的候選（預設主觀，等人處置：改尺／退回／豁免） |
 
 ### Evidence（證據）
 
@@ -93,7 +96,7 @@ laid ──(subjective：人打槍)──► rejected ──(goal 仍 running �
 
 ### Event（append-only 事件流）
 
-`contract_edited {item_id, by, origin, version_after}`／`evidence_added`／`reconcile {session_id, from_version, to_version, changed_items, reinterpreted_items}`／`gate_decision {decision, reason, against_version}`／`drill_down {evidence_id, pointer}`（人點開原物）／`ruling {item_id, verdict, after_drill_down}`／`turn_ended {met}`
+`contract_edited {item_id, by, origin, version_after}`／`evidence_added`／`reconcile {session_id, from_version, to_version, changed_items, reinterpreted_items}`／`gate_decision {decision, reason, against_version}`／`drill_down {evidence_id, pointer}`（人點開原物）／`ruling {item_id, verdict, after_drill_down}`（核可移除後 `verdict` 恆為 `rejected`；`after_drill_down` 記「是否先開過證據原物才退回」，那是原則 6 防橡皮章的訊號）／`waiver {item_id, waived}`／`turn_ended {met}`
 
 事件流就是三份儀表的原始資料：origin=(b) 的計數（強版假設讀數）、「drill_down 之後改裁決／加條目」的序列（（二）篩選規則的需求規格）、分流維度（原則 4）的觀察資料。
 
@@ -101,9 +104,10 @@ laid ──(subjective：人打槍)──► rejected ──(goal 仍 running �
 
 ```
 release ⇔ ∀ objective item: status == passed
-        ∧ ∀ subjective item: status ∈ {laid, approved}（詮釋＋至少一條證據已攤）
+        ∧ ∀ subjective item: status == laid（詮釋＋至少一條證據已攤）
         ∧ agent_synced_version == contract_version（已對齊最新契約）
         ∧ 無 rejected-未處理項（goal running 時）
+        （waived 項在以上每一條之前就被略過——不攔、不要求證據）
 ```
 
 block 的 reason **永遠是 delta**：缺哪幾條、哪幾條證據 stale、版本落後多少。連續 block 接近上限（spike 實測 = 8）時，reason 要改口氣：「回合可能被截斷，先把已完成部分 reconcile 回 store」。
@@ -136,11 +140,13 @@ Stop 守門的 session 解析：`sessions[sid]` 有條目 → 以該 goal 問 co
 | `POST /goals/{id}/items/{iid}/edit` | 改尺（人；agent 只能改自己攤的） |
 | `POST /goals/{id}/interpret`／`/evidence`／`/oracle` | 詮釋、附證據、oracle 結果回報 |
 | `POST /goals/{id}/reconcile` | `{session_id, to_version, ...}` → 更新 `agent_synced_version` |
-| `POST /goals/{id}/sessions` | 綁定 session（UserPromptSubmit hook 用，best-effort） |
+| `POST /goals/{id}/sessions` | 綁定 session（UserPromptSubmit hook 用，best-effort；帶 `pane?`——hook 從 `WITNOS_PANE` 讀到的 shell id，讀不到就 `None`，這條路徑不准因此失敗） |
 | `POST /goals/{id}/turn-ended` | SessionEnd hook 的入帳：goal 仍 `running` → `turn_ended_unmet`（否則 no-op）。記帳不是守門，fail open |
-| `POST /goals/{id}/rulings`／`/drilldown` | 人裁決、drill-down 記錄（UI 實際走 IPC；HTTP 面為完整性保留） |
+| `POST /goals/{id}/rulings`／`/drilldown` | 人退回（不再有核可欄位）、drill-down 記錄（UI 實際走 IPC；HTTP 面為完整性保留） |
 
-（goal 刪除與 auto 專案註冊表**不在** HTTP 面上——那是人的動作，只走 app IPC。）
+（goal 刪除、豁免、auto 專案註冊表、以及「把修正打回代理」**都不在** HTTP 面上——那些是人的動作，只走 app IPC。豁免尤其不能上 HTTP：agent 不得自己宣告某條不用檢查。）
+
+**把修正打回代理（2026-07-29）**：人改完尺之後，修正要能真的變成一次新回合，否則「事後裁決」對已收工的 agent 等於無效。app 自己擁有 agent 所在的終端機，所以走 PTY：`send_to_agent(goal_id, note)`（IPC）以 `sessions[].pane` 找到那個 shell，寫入一行（`\x15` 清掉半打的字，`\r` 即 Enter），回 `sent` ／ `no_agent`（那個 pane 停在裸 shell——沒有東西可下 prompt，且散文會被當指令執行，故拒寫）／ `unbound`（沒有 session、沒有 pane、或 pane 已不存在）。**安全守則是「pane 裡有沒有前景程式」**（`cd` 的守則正好相反，要有 shell 才能跑指令，兩者不可共用）；**「它是閒置還是在工作」不是安全問題**（鍵入 Claude Code 只會落在它的輸入框），只是禮貌，由 UI 依 Claude Code 自己publish 的 OSC 標題（`·` 閒置／`✳` 工作中）判斷——工作中就不打字，因為送信通道本來就會在它下一次 tool call 帶到。
 
 ## Agent 寫入路徑（本次決定）
 
