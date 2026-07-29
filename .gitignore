@@ -3,3 +3,9 @@ target/
 node_modules/
 dist/
 crates/witnos-app/gen/
+# Staging dir for the CLI bin bundled into the .app (see install-app.sh).
+crates/witnos-app/binaries/
+# Dogfooding artifacts: witnos runtime state + the hooks it installs here
+# (absolute machine-specific paths — never commit).
+.witnos/
+.claude/

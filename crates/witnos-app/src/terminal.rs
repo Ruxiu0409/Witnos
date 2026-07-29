@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::path::Path;
 use std::sync::Mutex;
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
@@ -70,6 +71,14 @@ pub fn term_spawn(
         cmd.arg("-l");
     }
     cmd.env("TERM", "xterm-256color");
+    // Make the bundled `witnos` CLI reachable by name for the human and for
+    // agents launched from this shell (agent-facing instructions carry the
+    // absolute path anyway — this is convenience, not a load-bearing link).
+    if let Some(bin_dir) = crate::bundled_cli().as_deref().and_then(Path::parent) {
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        let inherited = std::env::var("PATH").unwrap_or_default();
+        cmd.env("PATH", format!("{}{sep}{inherited}", bin_dir.display()));
+    }
     let dir = cwd
         .filter(|d| !d.is_empty())
         .or_else(|| std::env::var("HOME").ok())

@@ -341,3 +341,214 @@ fn delete_goal_removes_memory_and_disk() {
         Err(StoreError::GoalNotFound(_))
     ));
 }
+
+// ---------- auto mode: session goals, marker derivation, registry ----------
+
+#[test]
+fn create_auto_goal_is_idempotent_per_session() {
+    let (store, _dir) = temp_store();
+    let (a, created) = store
+        .create_auto_goal("fix login", "/proj", "sA", "claude-code")
+        .unwrap();
+    assert!(created);
+    assert!(a.watching);
+    assert_eq!(a.auto_session.as_deref(), Some("sA"));
+    assert_eq!(a.project_dir.as_deref(), Some("/proj"));
+    assert_eq!(a.sessions.len(), 1, "creation binds the owning session");
+
+    // Same session: returns the SAME goal, even after opt-out — the human's
+    // per-goal decision must never be undone by a re-fired hook.
+    store.set_watch(&a.id, None, false).unwrap();
+    let (again, created) = store
+        .create_auto_goal("fix login retry", "/proj", "sA", "claude-code")
+        .unwrap();
+    assert!(!created);
+    assert_eq!(again.id, a.id);
+    assert!(!again.watching, "opt-out must survive");
+
+    // A different session gets its own goal.
+    let (b, created) = store
+        .create_auto_goal("refactor payments", "/proj", "sB", "claude-code")
+        .unwrap();
+    assert!(created);
+    assert_ne!(b.id, a.id);
+}
+
+#[test]
+fn find_session_goal_prefers_the_owned_goal() {
+    let (store, _dir) = temp_store();
+    let (a, _) = store
+        .create_auto_goal("own goal", "/proj", "sA", "claude-code")
+        .unwrap();
+    let manual = store.create_goal("manual").unwrap();
+    store
+        .set_watch(&manual.id, Some("/proj".into()), true)
+        .unwrap();
+    // Opportunistic bind of sA to the manual goal must not shadow ownership.
+    store.bind_session(&manual.id, "claude-code", "sA").unwrap();
+
+    let found = store.find_session_goal("/proj", "sA").unwrap();
+    assert_eq!(found.id, a.id);
+    // A session only bound (not owning) resolves to what it's bound to.
+    store.bind_session(&manual.id, "claude-code", "sB").unwrap();
+    assert_eq!(store.find_session_goal("/proj", "sB").unwrap().id, manual.id);
+    assert!(store.find_session_goal("/proj", "sC").is_none());
+    assert!(store.find_session_goal("/elsewhere", "sA").is_none());
+}
+
+#[test]
+fn marker_compute_derives_sessions_and_default() {
+    let (store, _dir) = temp_store();
+    let (a, _) = store
+        .create_auto_goal("auto A", "/proj", "sA", "claude-code")
+        .unwrap();
+    let manual = store.create_goal("manual").unwrap();
+    store
+        .set_watch(&manual.id, Some("/proj".into()), true)
+        .unwrap();
+    store.bind_session(&manual.id, "claude-code", "sB").unwrap();
+    // Opportunistic cross-bind: sA also lands on the manual goal.
+    store.bind_session(&manual.id, "claude-code", "sA").unwrap();
+
+    let goals = store.goals_for_dir("/proj");
+    let m = marker::compute(true, &goals).unwrap();
+    assert!(m.auto);
+    assert_eq!(
+        m.default_goal.as_ref().unwrap().goal_id,
+        manual.id,
+        "newest watching manual goal is the default"
+    );
+    assert_eq!(m.sessions["sA"].goal_id, a.id, "owner wins its slot");
+    assert_eq!(m.sessions["sB"].goal_id, manual.id);
+
+    // Unwatching drops a goal out of the derivation entirely.
+    store.set_watch(&a.id, None, false).unwrap();
+    let m = marker::compute(true, &store.goals_for_dir("/proj")).unwrap();
+    assert_eq!(m.sessions["sA"].goal_id, manual.id, "falls back to the bound goal");
+
+    // Manual project with nothing watching → no marker; auto keeps one.
+    store.set_watch(&manual.id, None, false).unwrap();
+    let goals = store.goals_for_dir("/proj");
+    assert!(marker::compute(false, &goals).is_none());
+    let m = marker::compute(true, &goals).unwrap();
+    assert!(m.sessions.is_empty() && m.default_goal.is_none());
+}
+
+#[test]
+fn marker_parse_handles_both_shapes_and_resolves() {
+    use witnos_core::marker::{ArmedMarker, Resolution};
+
+    // Legacy v1 normalizes into a manual default goal.
+    let legacy = ArmedMarker::parse(r#"{"goal_id":"g1","contract_version":3}"#).unwrap();
+    assert!(!legacy.auto);
+    let d = legacy.default_goal.as_ref().unwrap();
+    assert_eq!((d.goal_id.as_str(), d.contract_version, d.agent_synced_version), ("g1", 3, 0));
+    assert!(matches!(legacy.resolve(Some("any")), Resolution::Entry(e) if e.goal_id == "g1"));
+
+    // v2 auto with no goals: unbound sessions are NoGoalAuto.
+    let auto = ArmedMarker::parse(r#"{"v":2,"auto":true}"#).unwrap();
+    assert!(matches!(auto.resolve(Some("sX")), Resolution::NoGoalAuto));
+    assert!(matches!(auto.resolve(None), Resolution::NoGoalAuto));
+
+    // v2 with a session entry: that session resolves to its own goal.
+    let m = ArmedMarker::parse(
+        r#"{"v":2,"auto":true,"sessions":{"sA":{"goal_id":"gA","contract_version":5,"agent_synced_version":2}}}"#,
+    )
+    .unwrap();
+    assert!(matches!(m.resolve(Some("sA")), Resolution::Entry(e) if e.goal_id == "gA"));
+    assert!(matches!(m.resolve(Some("sB")), Resolution::NoGoalAuto));
+
+    // Unusable content is None (gate still arms on presence).
+    assert!(ArmedMarker::parse("not json").is_none());
+    // An unrecognized object parses as an empty MANUAL marker → NoGoalManual
+    // (fail-closed on the gate path).
+    let odd = ArmedMarker::parse(r#"{"weird":1}"#).unwrap();
+    assert!(matches!(odd.resolve(Some("s")), Resolution::NoGoalManual));
+
+    // Round-trip.
+    let again = ArmedMarker::parse(&m.to_pretty()).unwrap();
+    assert_eq!(again, m);
+}
+
+#[test]
+fn registry_round_trips_and_canonicalizes() {
+    let home = std::env::temp_dir().join(format!(
+        "witnos-core-reg-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::SeqCst)
+    ));
+    let _ = std::fs::remove_dir_all(&home);
+    let proj = home.join("some-project");
+    std::fs::create_dir_all(&proj).unwrap();
+
+    let reg = ProjectRegistry::load(&home);
+    assert!(reg.list().is_empty());
+    assert!(reg.add(proj.to_str().unwrap()).unwrap());
+    assert!(!reg.add(proj.to_str().unwrap()).unwrap(), "dedupe");
+    // A messy-but-equivalent path resolves to the same entry.
+    let messy = format!("{}/../some-project", proj.display());
+    assert!(reg.contains(&messy));
+    assert_eq!(reg.list().len(), 1);
+
+    // Persisted: a fresh load sees it.
+    let reloaded = ProjectRegistry::load(&home);
+    assert_eq!(reloaded.list().len(), 1);
+    assert!(reloaded.remove(proj.to_str().unwrap()).unwrap());
+    assert!(!reloaded.remove(proj.to_str().unwrap()).unwrap());
+    assert!(ProjectRegistry::load(&home).list().is_empty());
+}
+
+#[test]
+fn parked_goal_status_derives_ruled_from_rulings() {
+    let (store, dir) = temp_store();
+    let goal = store.create_goal("demo").unwrap();
+    let ids = store
+        .lay_items(
+            &goal.id,
+            vec![
+                subjective("calm UI", Origin::AgentInitial),
+                subjective("readable copy", Origin::AgentInitial),
+            ],
+            Actor::Agent,
+        )
+        .unwrap();
+    for id in &ids {
+        store.set_interpretation(&goal.id, id, "how I read it").unwrap();
+        store.add_evidence(&goal.id, id, some_evidence()).unwrap();
+    }
+    store
+        .record_gate_decision(&goal.id, GateDecisionKind::Release, None)
+        .unwrap();
+    let status = |s: &Store| s.get_goal(&goal.id).unwrap().status;
+    assert_eq!(status(&store), GoalStatus::AwaitingRulings);
+
+    // Half ruled → still awaiting.
+    store.rule_item(&goal.id, &ids[0], true, false).unwrap();
+    assert_eq!(status(&store), GoalStatus::AwaitingRulings);
+
+    // Last laid item ruled (a rejection is a ruling too) → ruled.
+    store.rule_item(&goal.id, &ids[1], false, false).unwrap();
+    assert_eq!(status(&store), GoalStatus::Ruled);
+
+    // Re-ruling flips a verdict, not the parked state.
+    store.rule_item(&goal.id, &ids[0], false, false).unwrap();
+    assert_eq!(status(&store), GoalStatus::Ruled);
+
+    // Fresh evidence re-lays a rejected item → back to awaiting.
+    store.add_evidence(&goal.id, &ids[1], some_evidence()).unwrap();
+    assert_eq!(status(&store), GoalStatus::AwaitingRulings);
+    store.rule_item(&goal.id, &ids[1], true, false).unwrap();
+    store.rule_item(&goal.id, &ids[0], true, false).unwrap();
+    assert_eq!(status(&store), GoalStatus::Ruled);
+
+    // A goal persisted before the split (parked as awaiting_rulings though
+    // fully ruled) heals when the store loads it.
+    let path = dir.join(format!("{}.json", goal.id));
+    let stale = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("\"ruled\"", "\"awaiting_rulings\"");
+    std::fs::write(&path, stale).unwrap();
+    drop(store);
+    let store = Store::open(&dir).unwrap();
+    assert_eq!(status(&store), GoalStatus::Ruled);
+}

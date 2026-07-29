@@ -77,8 +77,8 @@ pub fn run() -> ExitCode {
     println!(
         "notes:\n\
          \x20 - the folder must be trusted by Claude Code, and new hooks may need approval (/hooks)\n\
-         \x20 - make sure `witnos` is on the agent's PATH (the protocol tells it to call `witnos …`)\n\
-         next: start the core, then run `witnos goal new \"<title>\"` here to arm the gate."
+         next: watch this project in the Witnos app (auto mode — each new agent session gets a goal\n\
+         from its first prompt), or run `witnos goal new \"<title>\"` here to arm a single goal."
     );
     ExitCode::SUCCESS
 }

@@ -88,7 +88,8 @@ impl Store {
         for entry in fs::read_dir(&dir)? {
             let path = entry?.path();
             if path.extension().is_some_and(|e| e == "json") {
-                let goal: Goal = serde_json::from_str(&fs::read_to_string(&path)?)?;
+                let mut goal: Goal = serde_json::from_str(&fs::read_to_string(&path)?)?;
+                normalize_parked_status(&mut goal);
                 goals.insert(goal.id.clone(), goal);
             }
         }
@@ -120,10 +121,79 @@ impl Store {
             created_at: now(),
             project_dir: None,
             watching: false,
+            auto_session: None,
         };
         persist(&self.dir, &goal)?;
         self.write().insert(goal.id.clone(), goal.clone());
         Ok(goal)
+    }
+
+    /// Auto mode: get-or-create the goal owned by one agent session in one
+    /// project. Idempotent inside the write lock — a double-fired hook is
+    /// structurally unable to create two goals. Returns (goal, created).
+    ///
+    /// A returned goal may be closed or unwatched: the human's per-goal
+    /// opt-out wins, and the caller must NOT re-watch it.
+    pub fn create_auto_goal(
+        &self,
+        title: &str,
+        project_dir: &str,
+        session_id: &str,
+        agent: &str,
+    ) -> Result<(Goal, bool), StoreError> {
+        let mut map = self.write();
+        if let Some(existing) = map.values().find(|g| {
+            g.auto_session.as_deref() == Some(session_id)
+                && g.project_dir.as_deref() == Some(project_dir)
+        }) {
+            return Ok((existing.clone(), false));
+        }
+        let goal = Goal {
+            id: new_id(),
+            title: title.to_string(),
+            status: GoalStatus::Running,
+            contract_version: 0,
+            agent_synced_version: 0,
+            sessions: vec![SessionBinding {
+                agent: agent.to_string(),
+                session_id: session_id.to_string(),
+                bound_at: now(),
+            }],
+            items: Vec::new(),
+            evidence: Vec::new(),
+            events: Vec::new(),
+            created_at: now(),
+            project_dir: Some(project_dir.to_string()),
+            watching: true,
+            auto_session: Some(session_id.to_string()),
+        };
+        persist(&self.dir, &goal)?;
+        map.insert(goal.id.clone(), goal.clone());
+        Ok((goal, true))
+    }
+
+    pub fn goals_for_dir(&self, dir: &str) -> Vec<Goal> {
+        self.read()
+            .values()
+            .filter(|g| g.project_dir.as_deref() == Some(dir))
+            .cloned()
+            .collect()
+    }
+
+    /// Resolve which goal one session gates against in a project. Prefers
+    /// the goal the session OWNS (auto_session) over goals it was merely
+    /// bound to opportunistically. Includes non-watching goals — the gate
+    /// needs to tell "human opted out" apart from "never bound".
+    pub fn find_session_goal(&self, dir: &str, session_id: &str) -> Option<Goal> {
+        let map = self.read();
+        let in_dir = || {
+            map.values()
+                .filter(|g| g.project_dir.as_deref() == Some(dir))
+        };
+        in_dir()
+            .find(|g| g.auto_session.as_deref() == Some(session_id))
+            .or_else(|| in_dir().find(|g| g.sessions.iter().any(|s| s.session_id == session_id)))
+            .cloned()
     }
 
     pub fn bind_session(&self, goal_id: &str, agent: &str, session_id: &str) -> Result<(), StoreError> {
@@ -523,9 +593,32 @@ impl Store {
             .ok_or_else(|| StoreError::GoalNotFound(goal_id.to_string()))?;
         let mut draft = goal.clone();
         let out = f(&mut draft)?;
+        normalize_parked_status(&mut draft);
         persist(&self.dir, &draft)?;
         *goal = draft;
         Ok(out)
+    }
+}
+
+/// While a goal is parked after release, `AwaitingRulings` vs `Ruled` is a
+/// pure derivation of item statuses — any subjective item still `Laid` keeps
+/// the goal awaiting. Recomputed on every mutation (a ruling can settle it;
+/// fresh evidence on a rejected item re-opens it) and on load, so goals
+/// stored before the split heal on open.
+fn normalize_parked_status(goal: &mut Goal) {
+    if matches!(
+        goal.status,
+        GoalStatus::AwaitingRulings | GoalStatus::Ruled
+    ) {
+        let awaiting = goal
+            .items
+            .iter()
+            .any(|i| matches!(i.class, Class::Subjective) && i.status == ItemStatus::Laid);
+        goal.status = if awaiting {
+            GoalStatus::AwaitingRulings
+        } else {
+            GoalStatus::Ruled
+        };
     }
 }
 

@@ -241,3 +241,164 @@ fn ups_fails_open_but_still_injects_locally_when_core_down() {
         "injection is locally decided and must survive a dead core: {out}"
     );
 }
+
+// ---------- auto mode: goal creation from the first prompt ----------
+
+struct AutoCore {
+    base: String,
+    auth: String,
+    state: std::sync::Arc<witnos_server::AppState>,
+    _rt: tokio::runtime::Runtime,
+}
+
+fn start_auto_core(home: &Path, project: &Path) -> AutoCore {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let handle = rt.block_on(witnos_server::start(home)).unwrap();
+    witnos_server::register_project(&handle.state, project.to_str().unwrap()).unwrap();
+    AutoCore {
+        base: format!("http://127.0.0.1:{}", handle.port),
+        auth: format!("Bearer {}", handle.token),
+        state: handle.state,
+        _rt: rt,
+    }
+}
+
+fn goals_list(core: &AutoCore) -> Vec<Value> {
+    ureq::get(&format!("{}/goals", core.base))
+        .set("Authorization", &core.auth)
+        .call()
+        .unwrap()
+        .into_json::<Value>()
+        .unwrap()
+        .as_array()
+        .cloned()
+        .unwrap()
+}
+
+fn ups(project: &Path, home: &Path, session: &str, prompt: &str) -> String {
+    let stdin = format!(
+        r#"{{"session_id":"{session}","cwd":"{}","prompt":"{prompt}"}}"#,
+        project.display()
+    );
+    run_bin(&["hook", "user-prompt-submit"], project, home, Some(&stdin)).0
+}
+
+#[test]
+fn ups_auto_creates_one_goal_per_session_from_the_prompt() {
+    let project = temp_dir("aups");
+    let home = temp_dir("aups-home");
+    let core = start_auto_core(&home, &project);
+
+    let out = ups(&project, &home, "s-auto", "Fix the login bug");
+    assert!(out.contains("additionalContext"), "got: {out}");
+    assert!(out.contains("auto-created"), "got: {out}");
+    assert!(out.contains("--goal"), "protocol must pin the goal id: {out}");
+    let goals = goals_list(&core);
+    assert_eq!(goals.len(), 1, "got: {goals:?}");
+    assert_eq!(goals[0]["title"], "Fix the login bug", "title = the user's words");
+
+    // Marker carries the session entry.
+    let m: Value = serde_json::from_str(
+        &std::fs::read_to_string(project.join(".witnos/armed.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(m["sessions"]["s-auto"]["goal_id"].is_string(), "got: {m}");
+
+    // Same session again: silent, no second goal.
+    let out = ups(&project, &home, "s-auto", "and another thing");
+    assert_eq!(out.trim(), "", "must instruct only once per session: {out}");
+    assert_eq!(goals_list(&core).len(), 1);
+
+    // A new session gets its own goal.
+    let out = ups(&project, &home, "s-two", "Refactor payments");
+    assert!(out.contains("Refactor payments"), "got: {out}");
+    assert_eq!(goals_list(&core).len(), 2);
+}
+
+#[test]
+fn ups_auto_truncates_long_titles_and_collapses_whitespace() {
+    let project = temp_dir("aups-trunc");
+    let home = temp_dir("aups-trunc-home");
+    let core = start_auto_core(&home, &project);
+
+    let long = "word ".repeat(30); // 150 chars, with a trailing space
+    let out = ups(&project, &home, "s-long", long.trim());
+    assert!(out.contains("additionalContext"), "got: {out}");
+    let goals = goals_list(&core);
+    let title = goals[0]["title"].as_str().unwrap();
+    assert_eq!(title.chars().count(), 81, "80 chars + ellipsis: {title:?}");
+    assert!(title.ends_with('…'), "got: {title:?}");
+
+    // Newlines collapse into single spaces (JSON \n in the prompt).
+    let out = ups(&project, &home, "s-nl", r"first line\nsecond line");
+    assert!(out.contains("additionalContext"), "got: {out}");
+    let goals = goals_list(&core);
+    let t = goals
+        .iter()
+        .find(|g| g["title"].as_str().unwrap().starts_with("first"))
+        .unwrap();
+    assert_eq!(t["title"], "first line second line");
+}
+
+#[test]
+fn ups_auto_retries_until_the_core_is_back() {
+    let project = temp_dir("aups-retry");
+    let home = temp_dir("aups-retry-home"); // no endpoint.json yet: core down
+    let dir = project.join(".witnos");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("armed.json"), r#"{"v":2,"auto":true}"#).unwrap();
+
+    // Core down: silent, and crucially NOT marked as instructed.
+    let out = ups(&project, &home, "s-r", "do the thing");
+    assert_eq!(out.trim(), "", "fail open silently: {out}");
+    assert!(
+        !project.join(".witnos/instructed.json").exists(),
+        "a failed creation must not consume the once-per-session injection"
+    );
+
+    // Core comes back: the same session's next prompt heals everything.
+    let core = start_auto_core(&home, &project);
+    let out = ups(&project, &home, "s-r", "do the thing");
+    assert!(out.contains("additionalContext"), "retry must inject: {out}");
+    assert_eq!(goals_list(&core).len(), 1);
+}
+
+#[test]
+fn ups_auto_respects_a_human_opt_out() {
+    let project = temp_dir("aups-opt");
+    let home = temp_dir("aups-opt-home");
+    let core = start_auto_core(&home, &project);
+
+    // The session's goal exists (created via HTTP, as the hook would)…
+    let goal: Value = ureq::post(&format!("{}/goals/auto", core.base))
+        .set("Authorization", &core.auth)
+        .send_json(json!({
+            "title": "opted out",
+            "project_dir": project.to_str().unwrap(),
+            "session_id": "s-opt",
+        }))
+        .unwrap()
+        .into_json()
+        .unwrap();
+    let gid = goal["id"].as_str().unwrap();
+    // …and the human unwatches it.
+    ureq::delete(&format!("{}/goals/{gid}/watch", core.base))
+        .set("Authorization", &core.auth)
+        .call()
+        .unwrap();
+
+    // The hook must stay silent and must NOT re-watch or duplicate it.
+    let out = ups(&project, &home, "s-opt", "try again anyway");
+    assert_eq!(out.trim(), "", "opt-out wins: {out}");
+    let goals = goals_list(&core);
+    assert_eq!(goals.len(), 1);
+    assert_eq!(goals[0]["watching"], false, "must not re-watch: {goals:?}");
+    // The store keeps the goal's session ownership, so the gate can tell
+    // "opted out" from "never bound".
+    let owned = core
+        .state
+        .store
+        .find_session_goal(project.to_str().unwrap(), "s-opt")
+        .expect("auto_session ownership must survive the opt-out");
+    assert_eq!(owned.id, gid);
+}

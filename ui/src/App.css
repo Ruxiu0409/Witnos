@@ -176,7 +176,8 @@
 /* Fixed inner width so the collapse animation clips instead of reflowing. */
 .sidebar .goal-list,
 .sidebar .new-goal,
-.sidebar .err {
+.sidebar .err,
+.sidebar .notice {
   width: var(--sidebar-w);
   transition:
     opacity 0.12s ease,
@@ -185,7 +186,8 @@
 
 .sidebar.collapsed .goal-list,
 .sidebar.collapsed .new-goal,
-.sidebar.collapsed .err {
+.sidebar.collapsed .err,
+.sidebar.collapsed .notice {
   opacity: 0;
   visibility: hidden;
 }
@@ -280,6 +282,40 @@
   color: var(--bad);
   font-size: 12px;
   padding: 8px 16px;
+}
+
+/* Dismissible inline note (e.g. the trust-folder caveat after adding a
+   project) — a button so a click anywhere clears it. */
+.notice {
+  display: block;
+  text-align: left;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 8px 16px;
+}
+
+.notice:hover {
+  background: var(--panel2);
+}
+
+/* ---------- auto-watched projects ---------- */
+
+.proj-section {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+}
+
+.watch-project {
+  display: block;
+  width: calc(100% - 20px);
+  margin: 8px 10px 2px;
+  font-size: 12px;
 }
 
 .sidebar-footer {

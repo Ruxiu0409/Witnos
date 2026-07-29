@@ -17,7 +17,7 @@ use witnos_core::{
     Pointer, StoreError, Version,
 };
 
-use crate::{marker, AppState};
+use crate::{resync_dir, resync_goal_dir, AppState};
 
 fn err(e: StoreError) -> Response {
     let code = match &e {
@@ -45,7 +45,12 @@ pub async fn health() -> Json<Value> {
 
 #[derive(Deserialize)]
 pub struct GateReq {
-    pub goal_id: String,
+    /// Absent in auto mode when the session never got a goal bound — the
+    /// gate then resolves by (project_dir, session_id) instead.
+    #[serde(default)]
+    pub goal_id: Option<String>,
+    #[serde(default)]
+    pub project_dir: Option<String>,
     #[serde(default)]
     pub session_id: Option<String>,
     #[serde(default)]
@@ -53,9 +58,32 @@ pub struct GateReq {
 }
 
 pub async fn gate(State(state): State<Arc<AppState>>, Json(req): Json<GateReq>) -> Response {
-    let goal = match goal_or_404(&state, &req.goal_id) {
-        Ok(g) => g,
-        Err(r) => return r,
+    let goal = match (&req.goal_id, &req.project_dir, &req.session_id) {
+        (Some(id), _, _) => match goal_or_404(&state, id) {
+            Ok(g) => g,
+            Err(r) => return r,
+        },
+        (None, Some(dir), Some(sid)) => match state.store.find_session_goal(dir, sid) {
+            Some(g) if g.watching => {
+                // The hook had no marker entry for a goal that exists and is
+                // watched — the marker is stale; heal it for the next round.
+                resync_dir(&state, dir);
+                g
+            }
+            // The human deliberately unwatched/closed this session's goal:
+            // per-goal opt-out wins over fail-closed (which protects against
+            // silent failure, not against deliberate human choice).
+            Some(_) => return Json(json!({"decision": "release"})).into_response(),
+            None => {
+                return Json(json!({"decision": "block", "reason": no_goal_reason()}))
+                    .into_response()
+            }
+        },
+        _ => {
+            return err(StoreError::Invalid(
+                "gate needs goal_id, or project_dir + session_id".into(),
+            ))
+        }
     };
     if let Some(sid) = &req.session_id {
         let _ = state.store.bind_session(&goal.id, "claude-code", sid);
@@ -102,18 +130,32 @@ pub async fn gate(State(state): State<Arc<AppState>>, Json(req): Json<GateReq>) 
     }
 }
 
+/// Auto project, session never got a goal: the core was unreachable at every
+/// prompt of this session. The reason string is the escape-hatch docs.
+fn no_goal_reason() -> String {
+    "[witnos] This project is auto-watched, but this session has no goal — Witnos was \
+     unreachable when your prompts were submitted. Tell the user to open the Witnos app \
+     (the next user prompt will attach a goal automatically), or to stop watching: remove \
+     the project in the app, or run `witnos disarm` in the project root. This stall is \
+     fail-closed by design."
+        .to_string()
+}
+
 fn block_reason(goal: &Goal, reasons: &[String]) -> String {
     format!(
         "[witnos] The verification contract (v{}) is not met:\n- {}\n\
-         Fetch the latest contract with `witnos contract show --since {}`; lay interpretations with \
+         Fetch the latest contract with `witnos contract show --goal {} --since {}`; lay interpretations with \
          `witnos item interpret <item-id> <text>`; attach evidence with `witnos evidence add <item-id>` \
          (JSON on stdin: {{conclusion, basis, provenance:[{{kind:\"file\"|\"command\"|\"url\", …}}]}}); \
          report oracle runs with `witnos oracle report <item-id> --passed|--failed`; \
-         then declare alignment with `witnos reconcile --to {}`.",
+         then declare alignment with `witnos reconcile --to {}`. \
+         All witnos commands accept `--goal {}`.",
         goal.contract_version,
         reasons.join("\n- "),
+        goal.id,
         goal.agent_synced_version,
         goal.contract_version,
+        goal.id,
     )
 }
 
@@ -130,6 +172,46 @@ pub async fn create_goal(
 ) -> Response {
     match state.store.create_goal(&req.title) {
         Ok(g) => Json(serde_json::to_value(&g).expect("goal serializes")).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct AutoGoalReq {
+    pub title: String,
+    pub project_dir: String,
+    pub session_id: String,
+    #[serde(default = "default_auto_agent")]
+    pub agent: String,
+}
+
+fn default_auto_agent() -> String {
+    "claude-code".to_string()
+}
+
+/// Auto mode: get-or-create the goal owned by one agent session (idempotent
+/// via the store's write lock). A goal the human closed/unwatched comes back
+/// with `watching: false` and is NOT re-watched — per-goal opt-out wins.
+pub async fn create_auto_goal(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<AutoGoalReq>,
+) -> Response {
+    match state
+        .store
+        .create_auto_goal(&req.title, &req.project_dir, &req.session_id, &req.agent)
+    {
+        Ok((goal, created)) => {
+            resync_dir(&state, &req.project_dir);
+            Json(json!({
+                "id": goal.id,
+                "title": goal.title,
+                "created": created,
+                "watching": goal.watching,
+                "contract_version": goal.contract_version,
+                "agent_synced_version": goal.agent_synced_version,
+            }))
+            .into_response()
+        }
         Err(e) => err(e),
     }
 }
@@ -172,7 +254,7 @@ pub async fn watch(
 ) -> Response {
     match state.store.set_watch(&id, Some(req.project_dir), true) {
         Ok(goal) => {
-            marker::sync(&goal);
+            resync_goal_dir(&state, &goal);
             Json(json!({"watching": true, "contract_version": goal.contract_version}))
                 .into_response()
         }
@@ -183,7 +265,7 @@ pub async fn watch(
 pub async fn unwatch(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
     match state.store.set_watch(&id, None, false) {
         Ok(goal) => {
-            marker::remove(&goal);
+            resync_goal_dir(&state, &goal);
             Json(json!({"watching": false})).into_response()
         }
         Err(e) => err(e),
@@ -290,7 +372,7 @@ pub async fn lay_items(
     match state.store.lay_items(&id, req.items, req.actor) {
         Ok(ids) => match state.store.get_goal(&id) {
             Some(goal) => {
-                marker::sync(&goal);
+                resync_goal_dir(&state, &goal);
                 Json(json!({"ids": ids, "version": goal.contract_version})).into_response()
             }
             None => err(StoreError::GoalNotFound(id)),
@@ -321,7 +403,7 @@ pub async fn edit_item(
     {
         Ok(()) => match state.store.get_goal(&id) {
             Some(goal) => {
-                marker::sync(&goal);
+                resync_goal_dir(&state, &goal);
                 Json(json!({"version": goal.contract_version})).into_response()
             }
             None => err(StoreError::GoalNotFound(id)),
@@ -403,7 +485,7 @@ pub async fn reconcile(
     {
         Ok(()) => {
             if let Some(goal) = state.store.get_goal(&id) {
-                marker::sync(&goal); // keep the delivery baseline current
+                resync_goal_dir(&state, &goal); // keep the delivery baseline current
             }
             Json(json!({"agent_synced_version": req.to_version})).into_response()
         }

@@ -28,6 +28,7 @@ fn temp_dir(tag: &str) -> PathBuf {
 struct Core {
     base: String,
     token: String,
+    state: std::sync::Arc<witnos_server::AppState>,
     _rt: tokio::runtime::Runtime,
 }
 
@@ -37,6 +38,7 @@ fn start_core(home: &Path) -> Core {
     Core {
         base: format!("http://127.0.0.1:{}", handle.port),
         token: handle.token,
+        state: handle.state,
         _rt: rt,
     }
 }
@@ -90,11 +92,23 @@ fn run_bin(
 }
 
 fn hook(kind: &str, project: &Path, home: &Path) -> String {
+    hook_as(kind, "s1", project, home)
+}
+
+fn hook_as(kind: &str, session: &str, project: &Path, home: &Path) -> String {
     let stdin = format!(
-        r#"{{"session_id":"s1","cwd":"{}","stop_hook_active":false}}"#,
+        r#"{{"session_id":"{session}","cwd":"{}","stop_hook_active":false}}"#,
         project.display()
     );
     run_bin(&["hook", kind], project, home, Some(&stdin)).0
+}
+
+fn ups_as(session: &str, prompt: &str, project: &Path, home: &Path) -> String {
+    let stdin = format!(
+        r#"{{"session_id":"{session}","cwd":"{}","prompt":"{prompt}"}}"#,
+        project.display()
+    );
+    run_bin(&["hook", "user-prompt-submit"], project, home, Some(&stdin)).0
 }
 
 #[test]
@@ -143,9 +157,13 @@ fn whole_v1_loop_headless() {
     let subj = id_of("UI feels calm");
 
     // Marker mirrored the bump — the delivery channel's no-network check.
+    // (v2 shape: the manually-watched goal is the default_goal.)
     let m: Value =
         serde_json::from_str(&std::fs::read_to_string(&marker_path).unwrap()).unwrap();
-    assert_eq!(m["contract_version"], 2, "marker must mirror the contract version");
+    assert_eq!(
+        m["default_goal"]["contract_version"], 2,
+        "marker must mirror the contract version: {m}"
+    );
 
     // -- 3. gate blocks with a per-item delta, never a bare "no".
     let out = hook("stop", &project, &home);
@@ -185,7 +203,10 @@ fn whole_v1_loop_headless() {
     );
     let m: Value =
         serde_json::from_str(&std::fs::read_to_string(&marker_path).unwrap()).unwrap();
-    assert_eq!(m["contract_version"], 3, "marker must mirror the human edit");
+    assert_eq!(
+        m["default_goal"]["contract_version"], 3,
+        "marker must mirror the human edit: {m}"
+    );
 
     // -- 7. the delivery channel injects ONLY the delta into the session.
     let out = hook("post-tool-use", &project, &home);
@@ -231,4 +252,99 @@ fn whole_v1_loop_headless() {
     assert!(kinds.contains(&"evidence_added"));
     assert!(kinds.contains(&"reconcile"));
     assert!(kinds.contains(&"gate_decision"));
+}
+
+/// The auto-mode correctness kernel: one goal per session, each session
+/// gated against ITS OWN contract — never a neighbor's.
+#[test]
+fn auto_mode_gates_each_session_against_its_own_goal() {
+    let home = temp_dir("auto-home");
+    let project = temp_dir("auto-project");
+    let core = start_core(&home);
+
+    // -- the human watches the project (what the app's IPC does).
+    witnos_server::register_project(&core.state, project.to_str().unwrap()).unwrap();
+    let marker_path = project.join(".witnos/armed.json");
+    let m: Value = serde_json::from_str(&std::fs::read_to_string(&marker_path).unwrap()).unwrap();
+    assert_eq!(m["auto"], true, "registering must arm an auto marker: {m}");
+
+    // -- pre-goal, the gate already fails closed (the dir was opted in).
+    let out = hook_as("stop", "sA", &project, &home);
+    assert!(out.contains(r#""decision":"block""#), "got: {out}");
+    assert!(out.contains("no goal"), "reason must explain the unbound session: {out}");
+
+    // -- session A's first prompt creates goal A; protocol carries --goal.
+    let out = ups_as("sA", "Fix the login bug", &project, &home);
+    assert!(out.contains("additionalContext"), "got: {out}");
+    assert!(out.contains("auto-created"), "got: {out}");
+    assert!(out.contains("Fix the login bug"), "title = the user's words: {out}");
+    assert!(out.contains("--goal"), "protocol must pin the goal id: {out}");
+
+    // -- session B gets its OWN goal.
+    let out = ups_as("sB", "Refactor payments", &project, &home);
+    assert!(out.contains("Refactor payments"), "got: {out}");
+
+    let m: Value = serde_json::from_str(&std::fs::read_to_string(&marker_path).unwrap()).unwrap();
+    let ga = m["sessions"]["sA"]["goal_id"].as_str().unwrap().to_string();
+    let gb = m["sessions"]["sB"]["goal_id"].as_str().unwrap().to_string();
+    assert_ne!(ga, gb, "one goal per session: {m}");
+
+    // -- with two active goals, ambient goal resolution must refuse.
+    let (_, stderr, ok) = run_bin(&["contract", "show"], &project, &home, None);
+    assert!(!ok);
+    assert!(stderr.contains("--goal"), "ambiguity must demand --goal: {stderr}");
+
+    // -- a human edit on goal A reaches session A only.
+    core.post(
+        &format!("/goals/{ga}/items"),
+        json!({"actor": "human", "items": [
+            {"claim": "login works on Safari", "check": "manual check", "origin": {"kind": "user_pre_run"}}
+        ]}),
+    );
+    let out = hook_as("post-tool-use", "sA", &project, &home);
+    assert!(out.contains("login works on Safari"), "delta must reach A: {out}");
+    let out = hook_as("post-tool-use", "sB", &project, &home);
+    assert_eq!(out.trim(), "", "B has no delta — must stay silent: {out}");
+
+    // -- session A completes ITS contract (via --goal), B does nothing.
+    let g = core.get(&format!("/goals/{ga}"));
+    let item = g["items"][0]["id"].as_str().unwrap().to_string();
+    let (_, e, ok) = run_bin(
+        &["item", "interpret", "--goal", &ga, &item, "works = no console errors on Safari 18"],
+        &project, &home, None,
+    );
+    assert!(ok, "interpret failed: {e}");
+    let evidence = r#"{"conclusion":"holds","basis":"manual run, no errors",
+        "provenance":[{"kind":"command","cmd":"open -a Safari http://localhost"}]}"#;
+    let (_, e, ok) = run_bin(&["evidence", "add", "--goal", &ga, &item], &project, &home, Some(evidence));
+    assert!(ok, "evidence add failed: {e}");
+    let (_, e, ok) = run_bin(&["reconcile", "--goal", &ga, "--to", "1"], &project, &home, None);
+    assert!(ok, "reconcile failed: {e}");
+
+    // -- the kernel: A releases, B still blocks.
+    let out = hook_as("stop", "sA", &project, &home);
+    assert_eq!(out.trim(), "", "A met its own contract and must release: {out}");
+    let out = hook_as("stop", "sB", &project, &home);
+    assert!(out.contains(r#""decision":"block""#), "B's contract is empty → block: {out}");
+
+    // -- opt-out: the human unwatches B's goal; B's gate releases.
+    ureq::delete(&format!("{}/goals/{gb}/watch", core.base))
+        .set("Authorization", &format!("Bearer {}", core.token))
+        .call()
+        .unwrap();
+    let out = hook_as("stop", "sB", &project, &home);
+    assert_eq!(out.trim(), "", "deliberate opt-out must release: {out}");
+
+    // -- graceful stop removes the marker; restart re-arms it (registry).
+    witnos_server::graceful_stop(&core.state);
+    assert!(!marker_path.exists(), "graceful stop must disarm");
+    drop(core);
+    let _core2 = start_core(&home);
+    let m: Value = serde_json::from_str(&std::fs::read_to_string(&marker_path).unwrap()).unwrap();
+    assert_eq!(m["auto"], true, "restart must re-arm the auto project: {m}");
+    assert_eq!(
+        m["sessions"]["sA"]["goal_id"].as_str().unwrap(),
+        ga,
+        "watching session goals must survive the restart: {m}"
+    );
 }

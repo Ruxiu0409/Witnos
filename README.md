@@ -4,7 +4,7 @@
 
 讓 AI coding agent 的「驗證」這一步從黑盒變透明、且能由人**即時協作編輯**的工具。
 
-**狀態：v1 實作進行中（2026-07-26 動工）。** 本檔記錄設計脈絡與待驗證假設。已落地：hooks 行為 spike（`spike/hooks-2026-07-26/`）、契約 schema（`docs/schema-v1.md`）、Rust workspace——`witnos-core`（型別／store／放行條件）、`witnos-server`（axum 核心，lib 形式、待 GUI 外殼內嵌）、headless bin `witnos`（雙 hook＋agent 子命令）。未動工：Tauri 外殼與前端、主觀判斷 prompt hook。（`witnos init`、UserPromptSubmit 綁定＋協議注入 hook、`witnos goal new` 已落地；契約書寫規範由 UserPromptSubmit hook 每 session 注入一次，不寫進任何檔案。）開發指令見 `CLAUDE.md`。
+**狀態：v1 實作進行中（2026-07-26 動工）。** 本檔記錄設計脈絡與待驗證假設。已落地：hooks 行為 spike（`spike/hooks-2026-07-26/`）、契約 schema（`docs/schema-v1.md`）、Rust workspace——`witnos-core`（型別／store／放行條件）、`witnos-server`（axum 核心，lib 形式、GUI 外殼內嵌）、headless bin `witnos`（雙 hook＋agent 子命令）、Tauri 外殼與前端。未動工：主觀判斷 prompt hook。（`witnos init`、UserPromptSubmit 綁定＋協議注入 hook、`witnos goal new` 已落地；契約書寫規範由 UserPromptSubmit hook 每 session 注入一次，不寫進任何檔案。**2026-07-29 落地 auto 模式**：在 app 選一個專案目錄開「自動監看」後，每個新 agent session 的第一個 prompt 自動建立該 session 專屬的目標並上膛——marker 升級為 session-keyed 的 v2、`witnos` bin 隨 app 打包、hooks 與協議全用絕對路徑，使用者不必碰 PATH。）開發指令見 `CLAUDE.md`。
 
 ---
 
@@ -154,18 +154,20 @@
 
 - **主觀項的判斷 = Claude Code 自己的 prompt／agent hook**（裝在 `settings.json`），由 Claude Code 拿**使用者自己的憑證**去跑。v1 的 Witnos 行程內**完全不必接 LLM**——「Rust 沒有 Anthropic Agent SDK」因此不構成問題。Rust 核心只負責儲存 agent 的理解與證據，並主動標記重新詮釋（原則 6）。
 
-- **`witnos init`**：裝進**專案層級**的 `.claude/settings.json`（不是使用者全域——見下面的上膛／退膛協議），共四樣：Stop 與 PostToolUse 兩個 command hook（都指向隨附的 `witnos-gate`）、主觀判斷用的 prompt hook，外加一小段**契約書寫規範**的 prompt（每條＝主張＋怎麼驗＋附什麼證據；主觀條必附詮釋；初版契約攤完後，agent 須再做一輪 **blindspot pass**——提出「使用者可能沒想到要驗」的候選項，預設主觀、待人裁決）——hook 只能逼 agent 停下，好契約要靠 prompt 端寫出來。
+- **`witnos init`**：裝進**專案層級**的 `.claude/settings.json`（不是使用者全域——見下面的上膛／退膛協議），共四樣：Stop 與 PostToolUse 兩個 command hook（都指向 app 內打包的 `witnos` bin，絕對路徑）、主觀判斷用的 prompt hook，外加一小段**契約書寫規範**的 prompt（每條＝主張＋怎麼驗＋附什麼證據；主觀條必附詮釋；初版契約攤完後，agent 須再做一輪 **blindspot pass**——提出「使用者可能沒想到要驗」的候選項，預設主觀、待人裁決）——hook 只能逼 agent 停下，好契約要靠 prompt 端寫出來。**App 的「監看專案（自動）」會代跑 `witnos init`**（shell out 到 bundle 內的 bin，實作只有一份；bin 內的 `current_exe()` 就是正確的 hook 絕對路徑），再把目錄記進 registry 並上膛；「資料夾要先受 Claude Code 信任」的前提以 UI 提示浮出。
 
 - **契約 schema 與 Agent 寫入路徑（2026-07-26 定，詳見 `docs/schema-v1.md`）：** Goal／Item／Evidence／Event 的欄位、放行條件的形式化、origin 儀表（強版假設讀數）都定在該檔。Agent 對 store 的讀寫走**同一支 headless bin 的子命令**（用 Bash 呼叫）——能跑 shell 指令是所有 coding agent 的最大公約數，endpoint／token 封裝在 bin 內、prompt 端不碰憑證。bin 命名同時收斂：**單一 headless bin 名為 `witnos`**（上文 `witnos-gate` 的角色成為它的 `hook` 子命令家族；不依賴 `tauri` crate 的約束不變）。
 
 - **發佈：** 單一簽章 `.app`／`.exe`，跑在作業系統 webview 上（十幾二十 MB 的量級，不是 Electron 的重量）。自用 dogfood 階段直接跑**未簽章／ad-hoc 簽章**——macOS 公證與 Windows 簽章延後到要裝到別人機器時再說，不擋 v1 驗證。
 
-- **fail-closed 只在「上膛」時生效（上膛／退膛協議）：** 「連不上一律 block」若無條件成立，哪天沒開 app、在無關的專案跑 Claude Code，每個 session 都會卡死在 Stop。所以：Witnos 開始盯一個目標時，在該專案寫入**上膛標記檔（armed marker）**，內含 goal id 與契約版本，優雅停止時移除；gate 只在「有標記且連不上」時 block。App 崩潰會留下標記 → 正確卡住；沒在用 Witnos 的專案 → 永不誤傷。刻意卡住仍是已知的 UX 代價，必須讓人看得見：app 要有「正在盯 N 個目標」指示，且 **block 的 reason 字串本身就是逃生門文件**（「Witnos unreachable——開啟 app，或執行 `witnos disarm`」）——使用者卡住的當下，眼睛正好就在 transcript 上。
+- **fail-closed 只在「上膛」時生效（上膛／退膛協議）：** 「連不上一律 block」若無條件成立，哪天沒開 app、在無關的專案跑 Claude Code，每個 session 都會卡死在 Stop。所以：被監看的專案帶一個**上膛標記檔（armed marker）**，優雅停止時移除；gate 只在「有標記且連不上」時 block。App 崩潰會留下標記 → 正確卡住；沒在用 Witnos 的專案 → 永不誤傷。刻意卡住仍是已知的 UX 代價，必須讓人看得見：app 要有「正在盯 N 個目標」指示，且 **block 的 reason 字串本身就是逃生門文件**（「Witnos unreachable——開啟 app，或執行 `witnos disarm`」）——使用者卡住的當下，眼睛正好就在 transcript 上。
+  - **marker v2（2026-07-29，auto 模式）：** `{v: 2, auto, default_goal?, sessions: {session_id → {goal_id, contract_version, agent_synced_version}}}`——整檔是「(registry 有沒有這個目錄, store 裡該目錄的 goals)」的**純推導**（只有 watching 的 goal 進得來；session 自己的 auto goal 佔自己的槽；最新的 watching 手動 goal 當 `default_goal`），tmp+rename 原子寫入；舊版單 goal 形狀仍可讀。**一個 session 一個目標、各自被自己的契約 gate**——「證明 agent 看過我那條修改」的信任基礎不允許 A session 被 B 的契約攔。auto 專案裡未綁定的 session 停下來時，gate 帶 `(project_dir, session_id)` 問 core：goal 在且 watching → 正常判定；人明確 opt-out → 放行（fail-closed 防的是靜默失效，不是人的決定，原則 5）；真的沒 goal → block（等於「core 從頭到尾都不在」的靜默失效窗口，正是 fail-closed 要堵的）。**auto 專案零 goal 也保留 marker、照樣卡**。auto 模式的 registry 在 `~/.witnos/projects.json`，人專屬面（IPC，不上 HTTP）；`witnos disarm` 移除 marker 但 registry 還在、app 重啟會重新上膛（訊息會明說：要停用去 app 移除專案）。
+  - **agent 子命令全部吃 `--goal <id>`**（同專案多個 active goal 時必帶）：Bash 呼叫不帶 session 身份，goal 身份因此走 in-context——協議注入、每個 delta、每個 block reason 都印著它；不帶旗標時只在 marker 能解析出唯一 goal 時才通。
 
 - **何時重新考慮：** 出現第一個真正「TS 形狀」的需求（roadmap 第 4 步——接 Codex 且想**原封不動**搬 open-design 的 adapter；或第 5 步要做原始軌跡的篩選呈現）才值得抽一個**由 Rust 核心監督的 TS sidecar** 出來。v1 不為此預付成本。
 
 - **實作備忘：**
-  - 「目標」與 Claude Code session 的綁定：用 UserPromptSubmit hook 建立／續接 goal（hook 拿得到 `session_id`）。
+  - 「目標」與 Claude Code session 的綁定：用 UserPromptSubmit hook 建立／續接 goal（hook 拿得到 `session_id` 與 `prompt`——後者 2026-07-29 同版實測補證，原始樣本見 spike 報告）。auto 模式下這支 hook get-or-create 該 session 的目標（標題＝首個 prompt 壓空白截 80 字；失敗**不記** instructed → 下個 prompt 重試，短暫斷線自癒；人 opt-out 過的目標原樣回傳、永不重新 watch）。`/clear`／resume 產生新 session id → 新目標，是所選語意不是 bug。
   - Stop hook 輸入的 `stop_hook_active` 旗標要處理，把「fail-closed 的刻意 stall」與「無限 block 迴圈」在語意上分開。
   - 長任務會經歷 context 壓縮：reconcile 時讓 agent 重讀 store 裡自己上次的詮釋，避免壓縮後重新發明一套理解。
   - 已對過官方 hooks 文件，並以 Claude Code 2.1.220 實測（2026-07-26；方法、原始記錄與可重跑的 harness 見 `spike/hooks-2026-07-26/`）：

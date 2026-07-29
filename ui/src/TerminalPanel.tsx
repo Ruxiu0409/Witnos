@@ -143,6 +143,11 @@ export default function TerminalPanel({
         <span className="term-title">{t.terminal}</span>
         {spawnCwd && <span className="term-cwd">{spawnCwd}</span>}
         <span className="spacer" />
+        {!exited && cwd !== null && cwd !== spawnCwd && (
+          <button className="ghost" onClick={restart} title={cwd}>
+            ↻ {t.restartHere}
+          </button>
+        )}
         {exited && (
           <button className="ghost" onClick={restart}>
             ↻ {t.restartShell}

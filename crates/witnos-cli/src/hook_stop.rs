@@ -13,7 +13,7 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::paths;
+use crate::paths::{self, Resolution};
 
 static ARMED: AtomicBool = AtomicBool::new(false);
 
@@ -48,7 +48,7 @@ pub fn run() -> ExitCode {
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| PathBuf::from("."));
 
-    let Some((_root, marker_path)) = paths::find_marker(&cwd) else {
+    let Some((root, marker_path)) = paths::find_marker(&cwd) else {
         // Not watched: allow silently. Projects not using Witnos are never harmed.
         return ExitCode::SUCCESS;
     };
@@ -56,23 +56,57 @@ pub fn run() -> ExitCode {
 
     // The marker's presence arms the gate even if its content is unreadable
     // (a torn write during an app crash must still stall, not slip through).
-    let marker: paths::Marker = std::fs::read_to_string(&marker_path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(paths::Marker {
-            goal_id: "unknown".into(),
-            contract_version: 0,
-            agent_synced_version: 0,
-        });
+    let Some(marker) = paths::read_marker(&marker_path) else {
+        println!(
+            "{}",
+            block_json(
+                "Witnos is watching this project but its armed marker is unreadable. \
+                 Ask the user to open the Witnos app (it rewrites the marker), or to run \
+                 `witnos disarm` in the project root to stop watching. This stall is \
+                 fail-closed by design; do not try to work around it."
+            )
+        );
+        return ExitCode::SUCCESS;
+    };
 
-    match ask_core(&marker, &input) {
+    // Resolve THIS session's goal; goal identity never crosses sessions.
+    let body = match marker.resolve(input.session_id.as_deref()) {
+        Resolution::Entry(entry) => json!({
+            "goal_id": entry.goal_id,
+            "session_id": input.session_id,
+            "stop_hook_active": input.stop_hook_active,
+        }),
+        // Auto project, unbound session: only the core can tell apart
+        // "goal exists but the marker is stale" / "human opted this goal
+        // out" / "genuinely never bound" — ask it; on error, block.
+        Resolution::NoGoalAuto => json!({
+            "project_dir": root.to_string_lossy(),
+            "session_id": input.session_id,
+            "stop_hook_active": input.stop_hook_active,
+        }),
+        // A manual marker that names no goal only exists hand-damaged;
+        // presence arms, so block.
+        Resolution::NoGoalManual => {
+            println!(
+                "{}",
+                block_json(
+                    "Witnos is watching this project but the armed marker names no goal. \
+                     Ask the user to open the Witnos app, or to run `witnos disarm` in the \
+                     project root to stop watching. This stall is fail-closed by design."
+                )
+            );
+            return ExitCode::SUCCESS;
+        }
+    };
+
+    match ask_core(body) {
         Ok(GateAnswer::Release) => ExitCode::SUCCESS,
         Ok(GateAnswer::Block(reason)) => {
             println!("{}", block_json(&reason));
             ExitCode::SUCCESS
         }
         Err(err) => {
-            println!("{}", block_json(&unreachable_reason(&marker.goal_id, &err)));
+            println!("{}", block_json(&unreachable_reason(&err)));
             ExitCode::SUCCESS
         }
     }
@@ -83,7 +117,7 @@ enum GateAnswer {
     Block(String),
 }
 
-fn ask_core(marker: &paths::Marker, input: &HookInput) -> Result<GateAnswer, String> {
+fn ask_core(body: Value) -> Result<GateAnswer, String> {
     let ep = paths::read_endpoint()?;
     // Internal timeouts far below the hook runner's own timeout: a hook
     // timeout would fail OPEN in the runner, ours fails CLOSED here.
@@ -94,13 +128,7 @@ fn ask_core(marker: &paths::Marker, input: &HookInput) -> Result<GateAnswer, Str
     let resp = agent
         .post(&format!("http://127.0.0.1:{}/gate", ep.port))
         .set("Authorization", &format!("Bearer {}", ep.token))
-        .send_json(json!({
-            "goal_id": marker.goal_id,
-            "contract_version": marker.contract_version,
-            "session_id": input.session_id,
-            "cwd": input.cwd,
-            "stop_hook_active": input.stop_hook_active,
-        }))
+        .send_json(body)
         .map_err(|e| format!("core unreachable or refused: {e}"))?;
 
     let body: Value = resp
@@ -120,9 +148,9 @@ fn ask_core(marker: &paths::Marker, input: &HookInput) -> Result<GateAnswer, Str
 
 /// The block reason IS the escape-hatch documentation: when stalled, the
 /// user's eyes are already on the transcript.
-fn unreachable_reason(goal_id: &str, err: &str) -> String {
+fn unreachable_reason(err: &str) -> String {
     format!(
-        "Witnos is watching this project (goal {goal_id}) but its core is unreachable ({err}). \
+        "Witnos is watching this project but its core is unreachable ({err}). \
          Ask the user to open the Witnos app, or to run `witnos disarm` in the project root to stop watching. \
          This stall is fail-closed by design; do not try to work around it."
     )

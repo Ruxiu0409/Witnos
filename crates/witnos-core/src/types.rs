@@ -25,6 +25,11 @@ pub enum GoalStatus {
     /// Agent released by the gate; subjective items await human rulings.
     /// This is a NORMAL terminal state of a goal.
     AwaitingRulings,
+    /// Parked like `AwaitingRulings`, but every subjective item carries a
+    /// human verdict — nothing awaits a ruling. The two are a pure derivation
+    /// of item statuses (recomputed on every store mutation and on load);
+    /// fresh evidence re-laying a rejected item moves the goal back.
+    Ruled,
     /// Turn ended without meeting the release condition (consecutive-block
     /// cap, user interrupt). Re-issuing or resuming moves it back to Running.
     TurnEndedUnmet,
@@ -243,6 +248,10 @@ pub struct Goal {
     /// Stop gate fails closed there.
     #[serde(default)]
     pub watching: bool,
+    /// Set when this goal was auto-created for one agent session (auto mode:
+    /// one goal per session, titled from its first prompt). None = manual.
+    #[serde(default)]
+    pub auto_session: Option<SessionId>,
 }
 
 impl Goal {

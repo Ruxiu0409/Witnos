@@ -41,6 +41,7 @@ export function saveLang(lang: Lang) {
 const GOAL_STATUS_EN: Record<string, string> = {
   running: "running",
   awaiting_rulings: "awaiting rulings",
+  ruled: "all ruled",
   turn_ended_unmet: "turn ended unmet",
   closed: "closed",
 };
@@ -48,6 +49,7 @@ const GOAL_STATUS_EN: Record<string, string> = {
 const GOAL_STATUS_ZH: Record<string, string> = {
   running: "執行中",
   awaiting_rulings: "等待裁決",
+  ruled: "已全數裁決",
   turn_ended_unmet: "回合結束（條件未達）",
   closed: "已關閉",
 };
@@ -116,6 +118,19 @@ const en = {
   confirm: "confirm",
   delete: "delete",
 
+  // auto-watched projects
+  projectsHeading: "auto-watched projects",
+  watchProjectAuto: "＋ watch a project (auto)",
+  removeProject: "stop watching",
+  confirmRemoveProject: (dir: string) =>
+    `Stop auto-watching "${dir}"? Its session goals stop gating; the goals and their evidence stay.`,
+  projectAddedNotice:
+    "Hooks installed. Make sure Claude Code trusts this folder (new hooks may need /hooks approval). Every new agent session here gets its own goal from its first prompt.",
+  projectGoals: (n: number) => `${n} goal${n === 1 ? "" : "s"}`,
+  projectHint:
+    "Open the terminal, run your agent (e.g. `claude`), and type a task — each new session gets its own goal, watchable here.",
+  restartHere: "restart shell here",
+
   // goal detail
   selectAGoal: "select a goal",
   contractV: (n: number) => `contract v${n}`,
@@ -151,8 +166,8 @@ const en = {
 
   // add item
   addItemHeading: "add a verification item",
-  claimPlaceholder: "claim — what must hold",
-  checkPlaceholder: "check — how to verify it",
+  claimPlaceholder: "what must be true when this is done",
+  checkPlaceholder: "how to verify (optional — the agent proposes one)",
   addSubjective: "add (subjective by default)",
   recordedAs: (note: string) => `will be recorded as: ${note}`,
   originViewing: (id: string) =>
@@ -191,6 +206,19 @@ const zhHant: Messages = {
   deleteGoalMenu: "刪除目標…",
   confirmDeleteGoal: (title) =>
     `確定刪除目標「${title}」？這會永久移除它的契約、證據與事件紀錄。`,
+
+  // auto-watched projects
+  projectsHeading: "自動監看的專案",
+  watchProjectAuto: "＋ 監看專案（自動）",
+  removeProject: "停止監看",
+  confirmRemoveProject: (dir) =>
+    `停止自動監看「${dir}」？其 session 目標不再攔停；目標與證據會保留。`,
+  projectAddedNotice:
+    "Hooks 已裝好。請確認 Claude Code 信任這個資料夾（新 hooks 可能需要在 /hooks 核准）。之後在這裡的每個新 agent session，第一個 prompt 會自動建立各自的目標。",
+  projectGoals: (n) => `${n} 個目標`,
+  projectHint:
+    "打開終端機、啟動你的 agent（例如 `claude`）、輸入任務——每個新 session 會自動建立自己的目標，在這裡即時監看。",
+  restartHere: "在此重啟 shell",
   confirm: "確認",
   delete: "刪除",
 
@@ -211,7 +239,7 @@ const zhHant: Messages = {
   itemClass: (k) => ITEM_CLASS_ZH[k] ?? k,
   itemStatus: (s) => ITEM_STATUS_ZH[s] ?? s,
   reinterpreted: (n) => `重新詮釋 ×${n}`,
-  reinterpretedTitle: "代理重新解讀了這條標準——檢查它目前的詮釋。",
+  reinterpretedTitle: "代理重新解讀了這項驗收條件——檢查它目前的詮釋。",
   originKind: (k) => ORIGIN_ZH[k] ?? k.replaceAll("_", " "),
   originTitle: (kindLabel) => `來源：${kindLabel}`,
   edit: "編輯",
@@ -221,15 +249,15 @@ const zhHant: Messages = {
   agentReadsThisAs: "代理對此的解讀：",
   againstV: (n) => `對照 v${n}`,
   stale: "過時",
-  staleTitle: "這條標準在證據擷取之後被修改過。",
+  staleTitle: "這項驗收條件在證據擷取之後被修改過。",
   provTitle: "開啟原始出處（會記錄為一次下鑽）",
   approve: "核可",
   reject: "駁回",
 
   // add item
   addItemHeading: "新增驗證項目",
-  claimPlaceholder: "主張——必須成立的事",
-  checkPlaceholder: "檢核——如何驗證",
+  claimPlaceholder: "完成時必須成立的事",
+  checkPlaceholder: "如何驗證（選填——留空由代理提出）",
   addSubjective: "新增（預設為主觀）",
   recordedAs: (note) => `將記錄為：${note}`,
   originViewing: (id) => `查看證據 ${id} 時——記錄為 strong-bet (b) 訊號`,

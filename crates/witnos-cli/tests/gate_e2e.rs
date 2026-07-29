@@ -242,3 +242,146 @@ fn delivery_fails_open_when_core_unreachable() {
     let out = run_hook("post-tool-use", &project, &home, &stdin_json(&project));
     assert_eq!(out.trim(), "", "delivery must fail open silently: {out}");
 }
+
+// ---------- marker v2: session routing + auto-mode fail-closed ----------
+
+fn write_raw_marker(project: &Path, content: &str) {
+    let dir = project.join(".witnos");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("armed.json"), content).unwrap();
+}
+
+/// Like spawn_server, but also hands back the raw request it served.
+fn spawn_capture_server(
+    status_line: &'static str,
+    body: &'static str,
+) -> (u16, std::sync::mpsc::Receiver<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        if let Ok((mut s, _)) = listener.accept() {
+            let _ = s.set_read_timeout(Some(Duration::from_secs(3)));
+            let mut data = Vec::new();
+            let mut buf = [0u8; 4096];
+            loop {
+                match s.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        data.extend_from_slice(&buf[..n]);
+                        if let Some(pos) = find(&data, b"\r\n\r\n") {
+                            let head = String::from_utf8_lossy(&data[..pos]).to_ascii_lowercase();
+                            let cl: usize = head
+                                .lines()
+                                .find_map(|l| l.strip_prefix("content-length:"))
+                                .and_then(|v| v.trim().parse().ok())
+                                .unwrap_or(0);
+                            if data.len() >= pos + 4 + cl {
+                                break;
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            let _ = tx.send(String::from_utf8_lossy(&data).into_owned());
+            let resp = format!(
+                "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = s.write_all(resp.as_bytes());
+        }
+    });
+    (port, rx)
+}
+
+#[test]
+fn stop_routes_the_session_to_its_own_goal_not_the_default() {
+    let project = temp_dir("v2-route");
+    let home = temp_dir("v2-route-home");
+    write_raw_marker(
+        &project,
+        r#"{"v":2,"auto":true,
+           "default_goal":{"goal_id":"g-default","contract_version":9},
+           "sessions":{"s1":{"goal_id":"g-mine","contract_version":4}}}"#,
+    );
+    let (port, rx) = spawn_capture_server("200 OK", r#"{"decision":"release"}"#);
+    write_endpoint(&home, port);
+    let out = run_hook("stop", &project, &home, &stdin_json(&project));
+    assert_eq!(out.trim(), "", "release: {out}");
+    let req = rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    assert!(req.contains("g-mine"), "must gate against the session's goal: {req}");
+    assert!(!req.contains("g-default"), "never a neighbor's goal: {req}");
+}
+
+#[test]
+fn stop_unbound_session_in_auto_asks_core_with_project_dir() {
+    let project = temp_dir("v2-unbound");
+    let home = temp_dir("v2-unbound-home");
+    write_raw_marker(&project, r#"{"v":2,"auto":true}"#);
+    let (port, rx) = spawn_capture_server(
+        "200 OK",
+        r#"{"decision":"block","reason":"no goal for this session"}"#,
+    );
+    write_endpoint(&home, port);
+    let out = run_hook("stop", &project, &home, &stdin_json(&project));
+    assert!(out.contains("no goal for this session"), "got: {out}");
+    let req = rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    assert!(req.contains("project_dir"), "resolution key must travel: {req}");
+    assert!(req.contains(r#""session_id":"s1""#), "got: {req}");
+}
+
+#[test]
+fn stop_auto_marker_blocks_when_core_unreachable() {
+    let project = temp_dir("v2-dead");
+    let home = temp_dir("v2-dead-home");
+    write_raw_marker(&project, r#"{"v":2,"auto":true}"#);
+    write_endpoint(&home, dead_port());
+    let out = run_hook("stop", &project, &home, &stdin_json(&project));
+    assert!(out.contains(r#""decision":"block""#), "got: {out}");
+    assert!(out.contains("witnos disarm"), "escape hatch must be documented: {out}");
+}
+
+#[test]
+fn stop_garbage_marker_content_still_blocks() {
+    let project = temp_dir("v2-garbage");
+    let home = temp_dir("v2-garbage-home");
+    write_raw_marker(&project, "{{{ not json");
+    let out = run_hook("stop", &project, &home, &stdin_json(&project));
+    assert!(out.contains(r#""decision":"block""#), "torn marker must stall: {out}");
+    assert!(out.contains("witnos disarm"), "got: {out}");
+}
+
+#[test]
+fn delivery_uses_the_sessions_own_entry() {
+    let project = temp_dir("v2-dlv");
+    let home = temp_dir("v2-dlv-home");
+    write_raw_marker(
+        &project,
+        r#"{"v":2,"auto":true,
+           "sessions":{"s1":{"goal_id":"g-mine","contract_version":5,"agent_synced_version":0}}}"#,
+    );
+    std::fs::write(project.join(".witnos/delivered.json"), r#"{"s1":2}"#).unwrap();
+    let (port, rx) = spawn_capture_server(
+        "200 OK",
+        r#"{"version":5,"summary":"- \"calm UI\" edited"}"#,
+    );
+    write_endpoint(&home, port);
+    let out = run_hook("post-tool-use", &project, &home, &stdin_json(&project));
+    assert!(out.contains("additionalContext"), "got: {out}");
+    let req = rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    assert!(req.contains("/goals/g-mine/contract?since=2"), "got: {req}");
+}
+
+#[test]
+fn delivery_silent_for_a_session_with_no_goal() {
+    let project = temp_dir("v2-dlv-nogoal");
+    let home = temp_dir("v2-dlv-nogoal-home"); // no endpoint: would fail loudly if it tried
+    write_raw_marker(
+        &project,
+        r#"{"v":2,"auto":true,
+           "sessions":{"other":{"goal_id":"g-x","contract_version":5}}}"#,
+    );
+    let out = run_hook("post-tool-use", &project, &home, &stdin_json(&project));
+    assert_eq!(out.trim(), "", "no goal → nothing to deliver: {out}");
+}

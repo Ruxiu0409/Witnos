@@ -6,8 +6,7 @@
 mod api;
 mod marker;
 
-pub use marker::{remove as remove_marker, sync as sync_marker};
-
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -19,11 +18,64 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::json;
 
-use witnos_core::Store;
+use witnos_core::{ProjectRegistry, Store};
 
 pub struct AppState {
     pub store: Store,
     pub token: String,
+    /// Auto-watch project registry — human-only surface (IPC), never HTTP.
+    pub registry: ProjectRegistry,
+}
+
+/// Recompute one project dir's armed marker from the registry + store.
+/// Every mutation that can change what a hook should see routes through
+/// here; per-goal incremental marker writes no longer exist.
+pub fn resync_dir(state: &AppState, dir: &str) {
+    marker::sync_dir(dir, state.registry.contains(dir), &state.store.goals_for_dir(dir));
+}
+
+/// Convenience for callers holding a goal: resync the dir it lives in.
+pub fn resync_goal_dir(state: &AppState, goal: &witnos_core::Goal) {
+    if let Some(dir) = goal.project_dir.as_deref() {
+        resync_dir(state, dir);
+    }
+}
+
+/// Register a directory for auto mode: every new agent session there gets a
+/// goal created from its first prompt. Arms the marker immediately.
+pub fn register_project(state: &AppState, dir: &str) -> std::io::Result<bool> {
+    let added = state.registry.add(dir)?;
+    resync_dir(state, dir);
+    Ok(added)
+}
+
+/// Unregister a directory from auto mode and unwatch its auto goals (so a
+/// restart cannot re-arm them). Manual watched goals in the dir survive.
+pub fn unregister_project(state: &AppState, dir: &str) -> std::io::Result<bool> {
+    let removed = state.registry.remove(dir)?;
+    for goal in state.store.goals_for_dir(dir) {
+        if goal.watching && goal.auto_session.is_some() {
+            let _ = state.store.set_watch(&goal.id, None, false);
+        }
+    }
+    resync_dir(state, dir);
+    Ok(removed)
+}
+
+/// Every dir that should carry a marker while the core runs: registered
+/// auto projects plus any dir with a watching goal.
+fn marker_dirs(state: &AppState) -> BTreeSet<String> {
+    let mut dirs: BTreeSet<String> = state.registry.list().into_iter().collect();
+    for id in state.store.goal_ids() {
+        if let Some(goal) = state.store.get_goal(&id) {
+            if goal.watching {
+                if let Some(dir) = goal.project_dir {
+                    dirs.insert(dir);
+                }
+            }
+        }
+    }
+    dirs
 }
 
 pub struct ServerHandle {
@@ -37,6 +89,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/health", get(api::health))
         .route("/gate", post(api::gate))
         .route("/goals", get(api::list_goals).post(api::create_goal))
+        .route("/goals/auto", post(api::create_auto_goal))
         .route("/goals/{id}", get(api::get_goal))
         .route("/goals/{id}/watch", post(api::watch).delete(api::unwatch))
         .route("/goals/{id}/sessions", post(api::bind_session))
@@ -79,15 +132,14 @@ pub async fn start(home: &Path) -> Result<ServerHandle, Box<dyn std::error::Erro
     let state = Arc::new(AppState {
         store,
         token: token.clone(),
+        registry: ProjectRegistry::load(home),
     });
 
-    // Re-arm watched goals: an app restart must restore their markers
+    // Re-arm watched dirs: an app restart must restore their markers
     // (a crash left them in place — correctly — and a graceful stop removed
-    // them while keeping `watching` true).
-    for id in state.store.goal_ids() {
-        if let Some(goal) = state.store.get_goal(&id) {
-            marker::sync(&goal);
-        }
+    // them while keeping `watching` / the registry entry durable).
+    for dir in marker_dirs(&state) {
+        resync_dir(&state, &dir);
     }
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
@@ -103,16 +155,13 @@ pub async fn start(home: &Path) -> Result<ServerHandle, Box<dyn std::error::Erro
 }
 
 /// Graceful stop: remove armed markers (so no project stalls while the app
-/// is deliberately closed) but keep `watching: true` in the store, so the
-/// next start re-arms them. An app CRASH never reaches this — the marker
-/// stays and the gate stalls, which is the designed fail-closed behavior.
+/// is deliberately closed) but keep `watching: true` / the registry entry
+/// durable, so the next start re-arms them. An app CRASH never reaches
+/// this — the marker stays and the gate stalls, which is the designed
+/// fail-closed behavior.
 pub fn graceful_stop(state: &AppState) {
-    for id in state.store.goal_ids() {
-        if let Some(goal) = state.store.get_goal(&id) {
-            if goal.watching {
-                marker::remove(&goal);
-            }
-        }
+    for dir in marker_dirs(state) {
+        marker::remove_for_dir(&dir);
     }
 }
 

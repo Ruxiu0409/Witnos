@@ -1,24 +1,16 @@
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 /// The armed marker, written into a watched project by the core when it
-/// starts watching a goal, mirrored on every contract bump, removed on
-/// graceful stop. Its PRESENCE is what arms the fail-closed gate.
+/// starts watching, mirrored on every contract bump, removed on graceful
+/// stop. Its PRESENCE is what arms the fail-closed gate. Shape + resolution
+/// rules are shared with the core via `witnos_core::marker`.
+pub use witnos_core::marker::{ArmedMarker, GoalRef, Resolution};
+
 pub const ARMED_REL: &str = ".witnos/armed.json";
 pub const DELIVERED_REL: &str = ".witnos/delivered.json";
 pub const INSTRUCTED_REL: &str = ".witnos/instructed.json";
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Marker {
-    pub goal_id: String,
-    pub contract_version: u64,
-    /// Mirrored so the delivery channel can compute its delta baseline
-    /// without touching the network: the agent has demonstrably seen
-    /// everything up to the version it last reconciled to.
-    #[serde(default)]
-    pub agent_synced_version: u64,
-}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Endpoint {
@@ -46,6 +38,22 @@ pub fn find_marker(start: &Path) -> Option<(PathBuf, PathBuf)> {
         dir = d.parent().map(Path::to_path_buf);
     }
     None
+}
+
+/// Read + parse the marker. `None` means unreadable/unparseable content —
+/// gate-path callers must still treat the file's presence as armed.
+pub fn read_marker(marker_path: &Path) -> Option<ArmedMarker> {
+    ArmedMarker::parse(&std::fs::read_to_string(marker_path).ok()?)
+}
+
+/// tmp+rename — with concurrent sessions the hook-side books (delivered /
+/// instructed) get concurrent writers; a torn file would merely re-inject
+/// once, but atomicity costs nothing.
+pub fn write_atomic(path: &Path, content: &str) {
+    let tmp = path.with_extension("json.tmp");
+    if std::fs::write(&tmp, content).is_ok() {
+        let _ = std::fs::rename(&tmp, path);
+    }
 }
 
 pub fn read_endpoint() -> Result<Endpoint, String> {

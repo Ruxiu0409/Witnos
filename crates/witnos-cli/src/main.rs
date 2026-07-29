@@ -64,7 +64,8 @@ fn usage() -> ExitCode {
          \x20 witnos hook post-tool-use       delivery channel (fails OPEN)\n\
          \x20 witnos hook user-prompt-submit  bind session + inject the protocol once\n\
          \n\
-         agent-facing (goal resolved from the armed marker):\n\
+         agent-facing (all accept --goal <id>; required when several goals\n\
+         are active — your id is in your [witnos] protocol message):\n\
          \x20 witnos contract show [--since N]      current contract (delta from N)\n\
          \x20 witnos item lay [--blindspot]         lay items; JSON array on stdin\n\
          \x20 witnos item interpret <id> <text…>    record your interpretation\n\
@@ -93,10 +94,15 @@ fn cmd_arm(rest: &[String]) -> ExitCode {
         .and_then(|i| rest.get(i + 1))
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(0);
-    let marker = paths::Marker {
-        goal_id: goal_id.clone(),
-        contract_version: version,
-        agent_synced_version: 0,
+    let marker = paths::ArmedMarker {
+        v: 2,
+        auto: false,
+        default_goal: Some(paths::GoalRef {
+            goal_id: goal_id.clone(),
+            contract_version: version,
+            agent_synced_version: 0,
+        }),
+        sessions: Default::default(),
     };
     let cwd = match std::env::current_dir() {
         Ok(d) => d,
@@ -106,12 +112,9 @@ fn cmd_arm(rest: &[String]) -> ExitCode {
         }
     };
     let dir = cwd.join(".witnos");
-    if let Err(e) = std::fs::create_dir_all(&dir).and_then(|_| {
-        std::fs::write(
-            dir.join("armed.json"),
-            serde_json::to_string_pretty(&marker).expect("marker serializes"),
-        )
-    }) {
+    if let Err(e) =
+        std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join("armed.json"), marker.to_pretty()))
+    {
         eprintln!("cannot write armed marker: {e}");
         return ExitCode::FAILURE;
     }
@@ -124,16 +127,26 @@ fn cmd_arm(rest: &[String]) -> ExitCode {
 fn cmd_disarm() -> ExitCode {
     let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
     match paths::find_marker(&cwd) {
-        Some((root, marker_path)) => match std::fs::remove_file(&marker_path) {
-            Ok(()) => {
-                println!("disarmed: {} is no longer watched", root.display());
-                ExitCode::SUCCESS
+        Some((root, marker_path)) => {
+            let was_auto = paths::read_marker(&marker_path).is_some_and(|m| m.auto);
+            match std::fs::remove_file(&marker_path) {
+                Ok(()) => {
+                    println!("disarmed: {} is no longer watched", root.display());
+                    if was_auto {
+                        println!(
+                            "note: this project is registered for auto-watch — the marker \
+                             returns when the Witnos app restarts; remove the project in \
+                             the app to stop for good"
+                        );
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("cannot remove {}: {e}", marker_path.display());
+                    ExitCode::FAILURE
+                }
             }
-            Err(e) => {
-                eprintln!("cannot remove {}: {e}", marker_path.display());
-                ExitCode::FAILURE
-            }
-        },
+        }
         None => {
             println!("nothing to disarm: no armed marker found from {}", cwd.display());
             ExitCode::SUCCESS
@@ -144,23 +157,32 @@ fn cmd_disarm() -> ExitCode {
 fn cmd_status() -> ExitCode {
     let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
     match paths::find_marker(&cwd) {
-        Some((root, marker_path)) => {
-            let marker: Option<paths::Marker> = std::fs::read_to_string(&marker_path)
-                .ok()
-                .and_then(|s| serde_json::from_str(&s).ok());
-            match marker {
-                Some(m) => println!(
-                    "armed: goal {} (contract v{}) at {}",
-                    m.goal_id,
-                    m.contract_version,
+        Some((root, marker_path)) => match paths::read_marker(&marker_path) {
+            Some(m) => {
+                println!(
+                    "armed{} at {}",
+                    if m.auto { " (auto mode)" } else { "" },
                     root.display()
-                ),
-                None => println!(
-                    "armed (marker unreadable — gate still fails closed) at {}",
-                    root.display()
-                ),
+                );
+                if let Some(d) = &m.default_goal {
+                    println!("  default goal {} (contract v{})", d.goal_id, d.contract_version);
+                }
+                for (sid, entry) in &m.sessions {
+                    let sid8: String = sid.chars().take(8).collect();
+                    println!(
+                        "  session {sid8}… → goal {} (contract v{}, synced v{})",
+                        entry.goal_id, entry.contract_version, entry.agent_synced_version
+                    );
+                }
+                if m.default_goal.is_none() && m.sessions.is_empty() {
+                    println!("  no goals yet — the next agent prompt creates one");
+                }
             }
-        }
+            None => println!(
+                "armed (marker unreadable — gate still fails closed) at {}",
+                root.display()
+            ),
+        },
         None => println!("not armed: this project is not being watched"),
     }
     match paths::read_endpoint() {

@@ -11,6 +11,13 @@ export interface GoalSummary {
   contract_version: number;
   watching: boolean;
   strong_bet_count: number;
+  project_dir?: string | null;
+}
+
+export interface ProjectSummary {
+  dir: string;
+  goal_count: number;
+  watching_count: number;
 }
 
 export interface Pointer {
@@ -97,3 +104,11 @@ export const drillDown = (goalId: string, evidenceId: string, pointer: Pointer) 
 export const closeGoal = (goalId: string) => invoke("close_goal", { goalId });
 export const deleteGoal = (goalId: string) => invoke("delete_goal", { goalId });
 export const unwatchGoal = (goalId: string) => invoke("unwatch_goal", { goalId });
+
+// Auto-watched projects (human-only surface — IPC, never HTTP).
+export const pickProjectDir = () => invoke<string | null>("pick_project_dir");
+export const addAutoProject = (dir: string) => invoke("add_auto_project", { dir });
+export const removeAutoProject = (dir: string) =>
+  invoke("remove_auto_project", { dir });
+export const listAutoProjects = () =>
+  invoke<ProjectSummary[]>("list_auto_projects");

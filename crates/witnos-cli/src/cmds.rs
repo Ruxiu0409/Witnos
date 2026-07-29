@@ -21,6 +21,23 @@ fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
         .map(String::as_str)
 }
 
+/// Pull `--goal <id>` out of the args so positional parsing stays simple.
+/// Goal identity travels in-context (protocol message, deltas, block
+/// reasons), never ambiently — see client::ctx.
+fn extract_goal(args: &[String]) -> (Option<String>, Vec<String>) {
+    let mut goal = None;
+    let mut rest = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--goal" {
+            goal = it.next().cloned();
+        } else {
+            rest.push(a.clone());
+        }
+    }
+    (goal, rest)
+}
+
 fn read_stdin() -> Result<String, String> {
     let mut s = String::new();
     std::io::stdin()
@@ -30,16 +47,18 @@ fn read_stdin() -> Result<String, String> {
 }
 
 pub fn contract_show(args: &[String]) -> ExitCode {
+    let (goal, args) = extract_goal(args);
+    let args = &args[..];
     let since: u64 = flag_value(args, "--since")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
-    let ctx = match client::ctx() {
+    let ctx = match client::ctx(goal.as_deref()) {
         Ok(c) => c,
         Err(e) => return fail(&e),
     };
     match ctx.get(&format!(
         "/goals/{}/contract?since={since}",
-        ctx.marker.goal_id
+        ctx.goal_id
     )) {
         Ok(v) => {
             println!(
@@ -54,12 +73,14 @@ pub fn contract_show(args: &[String]) -> ExitCode {
 }
 
 pub fn item_lay(args: &[String]) -> ExitCode {
+    let (goal, args) = extract_goal(args);
+    let args = &args[..];
     let origin = if args.iter().any(|a| a == "--blindspot") {
         "agent_blindspot"
     } else {
         "agent_initial"
     };
-    let ctx = match client::ctx() {
+    let ctx = match client::ctx(goal.as_deref()) {
         Ok(c) => c,
         Err(e) => return fail(&e),
     };
@@ -87,7 +108,7 @@ pub fn item_lay(args: &[String]) -> ExitCode {
         })
         .collect();
     match ctx.post(
-        &format!("/goals/{}/items", ctx.marker.goal_id),
+        &format!("/goals/{}/items", ctx.goal_id),
         json!({"actor": "agent", "items": wrapped}),
     ) {
         Ok(v) => {
@@ -107,6 +128,8 @@ pub fn item_lay(args: &[String]) -> ExitCode {
 }
 
 pub fn item_interpret(args: &[String]) -> ExitCode {
+    let (goal, args) = extract_goal(args);
+    let args = &args[..];
     let Some(item_id) = args.first() else {
         return fail("usage: witnos item interpret <item-id> <text…>   (or text on stdin)");
     };
@@ -121,12 +144,12 @@ pub fn item_interpret(args: &[String]) -> ExitCode {
     if text.is_empty() {
         return fail("interpretation text required (as arguments or on stdin)");
     }
-    let ctx = match client::ctx() {
+    let ctx = match client::ctx(goal.as_deref()) {
         Ok(c) => c,
         Err(e) => return fail(&e),
     };
     match ctx.post(
-        &format!("/goals/{}/interpret", ctx.marker.goal_id),
+        &format!("/goals/{}/interpret", ctx.goal_id),
         json!({"item_id": item_id, "text": text}),
     ) {
         Ok(_) => {
@@ -138,13 +161,15 @@ pub fn item_interpret(args: &[String]) -> ExitCode {
 }
 
 pub fn evidence_add(args: &[String]) -> ExitCode {
+    let (goal, args) = extract_goal(args);
+    let args = &args[..];
     let Some(item_id) = args.first() else {
         return fail(
             "usage: witnos evidence add <item-id>   with JSON on stdin: \
              {conclusion, basis, provenance:[{kind:\"file\"|\"command\"|\"url\", …}]}",
         );
     };
-    let ctx = match client::ctx() {
+    let ctx = match client::ctx(goal.as_deref()) {
         Ok(c) => c,
         Err(e) => return fail(&e),
     };
@@ -163,7 +188,7 @@ pub fn evidence_add(args: &[String]) -> ExitCode {
         body["workspace"] = fingerprint(&ctx.root);
     }
     body["item_id"] = json!(item_id);
-    match ctx.post(&format!("/goals/{}/evidence", ctx.marker.goal_id), body) {
+    match ctx.post(&format!("/goals/{}/evidence", ctx.goal_id), body) {
         Ok(v) => {
             println!(
                 "evidence {} attached to {item_id}",
@@ -176,6 +201,8 @@ pub fn evidence_add(args: &[String]) -> ExitCode {
 }
 
 pub fn oracle_report(args: &[String]) -> ExitCode {
+    let (goal, args) = extract_goal(args);
+    let args = &args[..];
     let Some(item_id) = args.first() else {
         return fail("usage: witnos oracle report <item-id> --passed|--failed");
     };
@@ -187,12 +214,12 @@ pub fn oracle_report(args: &[String]) -> ExitCode {
         (false, true) => false,
         _ => return fail("exactly one of --passed / --failed is required"),
     };
-    let ctx = match client::ctx() {
+    let ctx = match client::ctx(goal.as_deref()) {
         Ok(c) => c,
         Err(e) => return fail(&e),
     };
     match ctx.post(
-        &format!("/goals/{}/oracle", ctx.marker.goal_id),
+        &format!("/goals/{}/oracle", ctx.goal_id),
         json!({"item_id": item_id, "passed": passed}),
     ) {
         Ok(_) => {
@@ -207,18 +234,20 @@ pub fn oracle_report(args: &[String]) -> ExitCode {
 }
 
 pub fn reconcile(args: &[String]) -> ExitCode {
+    let (goal, args) = extract_goal(args);
+    let args = &args[..];
     let Some(to) = flag_value(args, "--to").and_then(|v| v.parse::<u64>().ok()) else {
         return fail("usage: witnos reconcile --to <version> [--reinterpreted id,id,…]");
     };
     let reinterpreted: Vec<String> = flag_value(args, "--reinterpreted")
         .map(|v| v.split(',').map(|s| s.trim().to_string()).collect())
         .unwrap_or_default();
-    let ctx = match client::ctx() {
+    let ctx = match client::ctx(goal.as_deref()) {
         Ok(c) => c,
         Err(e) => return fail(&e),
     };
     match ctx.post(
-        &format!("/goals/{}/reconcile", ctx.marker.goal_id),
+        &format!("/goals/{}/reconcile", ctx.goal_id),
         json!({
             "session_id": "agent-cli",
             "to_version": to,

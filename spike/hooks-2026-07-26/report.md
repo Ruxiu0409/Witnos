@@ -28,6 +28,16 @@
 5. **目標↔session 綁定可行**：UserPromptSubmit 輸入有 `session_id`。
 6. 新發現的**信任前提**：未受信任的資料夾會忽略專案 settings 的 `permissions.allow`（實測該情況下 hooks 仍會執行，但別依賴這行為）→ `witnos init` 流程要納入「資料夾必須先受信任」。
 
+## 補測（2026-07-29，同版 2.1.220）
+
+UserPromptSubmit 輸入**含 `prompt` 欄位**（使用者原文）——auto 模式「以首個 prompt 命名 goal」的依據。原始樣本：
+
+```json
+{"session_id":"3a43039f-…","transcript_path":"…","cwd":"…","prompt_id":"9a5535e4-…","permission_mode":"default","hook_event_name":"UserPromptSubmit","prompt":"hello witnos ups probe"}
+```
+
+方法：scratch 目錄裝一個 `cat >> ups-input.jsonl` 的 UPS hook，`claude -p "hello witnos ups probe" --model haiku` 一發即得。
+
 ## 殘留待驗（下次落地前）
 
 - **prompt / agent 型 hook 未測**（主觀判斷要用它）——v1 動工前補測。

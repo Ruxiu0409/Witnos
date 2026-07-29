@@ -28,8 +28,40 @@ fn witnos_home() -> PathBuf {
 
 fn resync(state: &App, goal_id: &str) {
     if let Some(goal) = state.0.store.get_goal(goal_id) {
-        witnos_server::sync_marker(&goal);
+        witnos_server::resync_goal_dir(&state.0, &goal);
     }
+}
+
+/// The bundled headless CLI: the hooks it installs point at its own
+/// absolute path (`current_exe` inside `witnos init`), so resolving it here
+/// is the only PATH-free link the app needs.
+pub(crate) fn bundled_cli() -> Option<PathBuf> {
+    let name = if cfg!(windows) { "witnos.exe" } else { "witnos" };
+    if let Ok(p) = std::env::var("WITNOS_CLI_BIN") {
+        let p = PathBuf::from(p);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    // Dev loop: cargo puts the witnos bin next to witnos-app in target/.
+    let sibling = dir.join(name);
+    if sibling.is_file() {
+        return Some(sibling);
+    }
+    // macOS bundle: Contents/MacOS/witnos-app → Contents/Resources/bin/witnos.
+    let resource = dir.parent()?.join("Resources").join("bin").join(name);
+    if resource.is_file() {
+        // Resource copying can strip the exec bit — restore it defensively.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&resource, std::fs::Permissions::from_mode(0o755));
+        }
+        return Some(resource);
+    }
+    None
 }
 
 #[tauri::command]
@@ -51,6 +83,7 @@ fn list_goals(state: State<'_, App>) -> Vec<Value> {
                 "contract_version": g.contract_version,
                 "watching": g.watching,
                 "strong_bet_count": g.strong_bet_count(),
+                "project_dir": g.project_dir,
             })
         })
         .collect()
@@ -158,9 +191,6 @@ fn drill_down(
 
 #[tauri::command]
 fn close_goal(state: State<'_, App>, goal_id: String) -> Result<Value, String> {
-    if let Some(goal) = state.0.store.get_goal(&goal_id) {
-        witnos_server::remove_marker(&goal);
-    }
     state
         .0
         .store
@@ -171,6 +201,7 @@ fn close_goal(state: State<'_, App>, goal_id: String) -> Result<Value, String> {
         .store
         .set_status(&goal_id, GoalStatus::Closed)
         .map_err(|e| e.to_string())?;
+    resync(&state, &goal_id); // other goals in the same dir keep their marker
     Ok(json!({"ok": true}))
 }
 
@@ -178,14 +209,12 @@ fn close_goal(state: State<'_, App>, goal_id: String) -> Result<Value, String> {
 /// surface the agent talks to.
 #[tauri::command]
 fn delete_goal(state: State<'_, App>, goal_id: String) -> Result<Value, String> {
-    if let Some(goal) = state.0.store.get_goal(&goal_id) {
-        witnos_server::remove_marker(&goal);
-    }
-    state
+    let goal = state
         .0
         .store
         .delete_goal(&goal_id)
         .map_err(|e| e.to_string())?;
+    witnos_server::resync_goal_dir(&state.0, &goal);
     Ok(json!({"ok": true}))
 }
 
@@ -196,8 +225,71 @@ fn unwatch_goal(state: State<'_, App>, goal_id: String) -> Result<Value, String>
         .store
         .set_watch(&goal_id, None, false)
         .map_err(|e| e.to_string())?;
-    witnos_server::remove_marker(&goal);
+    witnos_server::resync_goal_dir(&state.0, &goal);
     Ok(json!({"ok": true}))
+}
+
+// ---------- auto-watch projects (human-only surface: IPC, never HTTP) ----------
+
+#[tauri::command]
+async fn pick_project_dir(app: tauri::AppHandle) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    app.dialog()
+        .file()
+        .blocking_pick_folder()
+        .and_then(|f| f.into_path().ok())
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Watch a project in auto mode: install the hooks (via the bundled CLI, so
+/// they point at its absolute path), register the dir, arm the marker.
+#[tauri::command]
+async fn add_auto_project(state: State<'_, App>, dir: String) -> Result<Value, String> {
+    let path = PathBuf::from(&dir);
+    if !path.is_dir() {
+        return Err(format!("not a directory: {dir}"));
+    }
+    let cli = bundled_cli()
+        .ok_or("witnos CLI not found — reinstall the app (or set WITNOS_CLI_BIN in dev)")?;
+    let out = std::process::Command::new(&cli)
+        .arg("init")
+        .current_dir(&path)
+        .output()
+        .map_err(|e| format!("cannot run {}: {e}", cli.display()))?;
+    if !out.status.success() {
+        return Err(format!(
+            "witnos init failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    witnos_server::register_project(&state.0, &dir).map_err(|e| e.to_string())?;
+    Ok(json!({"ok": true}))
+}
+
+/// Stop auto-watching: unregister + unwatch its auto goals (so a restart
+/// cannot re-arm them). The installed hooks stay — inert without a marker.
+#[tauri::command]
+fn remove_auto_project(state: State<'_, App>, dir: String) -> Result<Value, String> {
+    witnos_server::unregister_project(&state.0, &dir).map_err(|e| e.to_string())?;
+    Ok(json!({"ok": true}))
+}
+
+#[tauri::command]
+fn list_auto_projects(state: State<'_, App>) -> Vec<Value> {
+    state
+        .0
+        .registry
+        .list()
+        .into_iter()
+        .map(|dir| {
+            let goals = state.0.store.goals_for_dir(&dir);
+            json!({
+                "dir": dir,
+                "goal_count": goals.len(),
+                "watching_count": goals.iter().filter(|g| g.watching).count(),
+            })
+        })
+        .collect()
 }
 
 fn open_original(goal: &Goal, pointer: &Pointer) {
@@ -235,6 +327,7 @@ fn open_original(goal: &Goal, pointer: &Pointer) {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let handle =
                 tauri::async_runtime::block_on(witnos_server::start(&witnos_home()))
@@ -254,6 +347,10 @@ fn main() {
             close_goal,
             delete_goal,
             unwatch_goal,
+            pick_project_dir,
+            add_auto_project,
+            remove_auto_project,
+            list_auto_projects,
             terminal::term_spawn,
             terminal::term_write,
             terminal::term_resize,

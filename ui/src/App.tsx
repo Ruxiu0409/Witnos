@@ -30,11 +30,18 @@ function usePanelWidth(key: string, spec: WidthSpec) {
   return [w, set] as const;
 }
 
+function basename(dir: string): string {
+  return dir.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || dir;
+}
+
 export default function App() {
   const [goals, setGoals] = useState<api.GoalSummary[]>([]);
+  const [projects, setProjects] = useState<api.ProjectSummary[]>([]);
   const [sel, setSel] = useState<string | null>(null);
+  const [selProject, setSelProject] = useState<string | null>(null);
   const [goal, setGoal] = useState<api.Goal | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem("witnos.sidebar_collapsed") === "1",
   );
@@ -56,7 +63,8 @@ export default function App() {
   const [menu, setMenu] = useState<{
     x: number;
     y: number;
-    goal: api.GoalSummary;
+    goal?: api.GoalSummary;
+    project?: api.ProjectSummary;
   } | null>(null);
   // In-app confirm: window.confirm() is a silent no-op in wry's WKWebView
   // (no WKUIDelegate confirm panel), so never use it here.
@@ -74,7 +82,6 @@ export default function App() {
 
   const [newTitle, setNewTitle] = useState("");
   const [newClaim, setNewClaim] = useState("");
-  const [newCheck, setNewCheck] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [editClaim, setEditClaim] = useState("");
   const [editCheck, setEditCheck] = useState("");
@@ -82,6 +89,7 @@ export default function App() {
   const refresh = useCallback(async () => {
     try {
       setGoals(await api.listGoals());
+      setProjects(await api.listAutoProjects());
       if (sel) setGoal(await api.getGoal(sel));
       setErr(null);
     } catch (e) {
@@ -119,10 +127,43 @@ export default function App() {
 
   const selectGoal = (id: string) => {
     setSel(id);
+    setSelProject(null);
     setGoal(null);
     setViewing(null);
     setEditing(null);
   };
+
+  const selectProject = (dir: string) => {
+    setSelProject(dir);
+    setSel(null);
+    setGoal(null);
+    setViewing(null);
+    setEditing(null);
+  };
+
+  const watchProject = async () => {
+    try {
+      const dir = await api.pickProjectDir();
+      if (!dir) return;
+      await api.addAutoProject(dir);
+      setNotice(t.projectAddedNotice);
+      selectProject(dir);
+      refresh();
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+
+  const removeProject = (p: api.ProjectSummary) =>
+    setConfirmBox({
+      message: t.confirmRemoveProject(p.dir),
+      label: t.removeProject,
+      action: async () => {
+        await api.removeAutoProject(p.dir);
+        if (selProject === p.dir) setSelProject(null);
+        refresh();
+      },
+    });
 
   const createGoal = async () => {
     if (!newTitle.trim()) return;
@@ -146,11 +187,13 @@ export default function App() {
       },
     });
 
+  // Quick-add takes only the criterion text — no check field. How to verify
+  // is the agent's to propose (interpretation + evidence, human rules on it),
+  // so an empty check is a valid contract item, not missing data.
   const addItem = async () => {
-    if (!goal || !newClaim.trim() || !newCheck.trim()) return;
-    await api.addItem(goal.id, newClaim.trim(), newCheck.trim(), viewing);
+    if (!goal || !newClaim.trim()) return;
+    await api.addItem(goal.id, newClaim.trim(), "", viewing);
     setNewClaim("");
-    setNewCheck("");
     refresh();
   };
 
@@ -284,6 +327,35 @@ export default function App() {
           </div>
         )}
         <div className="goal-list">
+          {!showArchive && (
+            <div className="proj-section">
+              {projects.length > 0 && (
+                <div className="archive-head">{t.projectsHeading}</div>
+              )}
+              {projects.map((p) => (
+                <button
+                  key={p.dir}
+                  className={`goal-row ${selProject === p.dir ? "sel" : ""}`}
+                  title={p.dir}
+                  onClick={() => selectProject(p.dir)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setMenu({ x: e.clientX, y: e.clientY, project: p });
+                  }}
+                >
+                  <span className="goal-title">📁 {basename(p.dir)}</span>
+                  <span className="goal-meta">
+                    {t.projectGoals(p.goal_count)}
+                    {p.watching_count > 0 ? " · 👁" : ""}
+                  </span>
+                </button>
+              ))}
+              <button className="ghost watch-project" onClick={watchProject}>
+                {t.watchProjectAuto}
+              </button>
+            </div>
+          )}
           {showArchive && (
             <div className="archive-head">
               {t.archivedHeading(archivedGoals.length)}
@@ -324,6 +396,15 @@ export default function App() {
           </div>
         )}
         {err && <div className="err">{err}</div>}
+        {notice && (
+          <button
+            className="notice"
+            onClick={() => setNotice(null)}
+            title={t.clear}
+          >
+            {notice}
+          </button>
+        )}
         <div className="sidebar-footer">
           <button
             className={`settings-btn ${showArchive ? "active" : ""}`}
@@ -384,17 +465,32 @@ export default function App() {
               top: Math.min(menu.y, window.innerHeight - 48),
             }}
           >
-            <button
-              className="ctx-item danger-item"
-              role="menuitem"
-              onClick={() => {
-                const g = menu.goal;
-                setMenu(null);
-                removeGoal(g);
-              }}
-            >
-              {t.deleteGoalMenu}
-            </button>
+            {menu.goal && (
+              <button
+                className="ctx-item danger-item"
+                role="menuitem"
+                onClick={() => {
+                  const g = menu.goal!;
+                  setMenu(null);
+                  removeGoal(g);
+                }}
+              >
+                {t.deleteGoalMenu}
+              </button>
+            )}
+            {menu.project && (
+              <button
+                className="ctx-item danger-item"
+                role="menuitem"
+                onClick={() => {
+                  const p = menu.project!;
+                  setMenu(null);
+                  removeProject(p);
+                }}
+              >
+                {t.removeProject}…
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -429,7 +525,7 @@ export default function App() {
 
       <main className="workspace">
         <TerminalPanel
-          cwd={goal?.project_dir ?? null}
+          cwd={selProject ?? goal?.project_dir ?? null}
           t={t}
           hidden={workspaceView !== "terminal"}
         />
@@ -469,7 +565,9 @@ export default function App() {
           />
           <aside className="detail">
             {!goal ? (
-              <div className="empty">{t.selectAGoal}</div>
+              <div className="empty">
+                {selProject ? t.projectHint : t.selectAGoal}
+              </div>
             ) : (
               <>
                 <header className="goal-head">
@@ -574,10 +672,12 @@ export default function App() {
                         {editing === item.id ? (
                           <div className="edit-form">
                             <input
+                              placeholder={t.claimPlaceholder}
                               value={editClaim}
                               onChange={(e) => setEditClaim(e.target.value)}
                             />
                             <input
+                              placeholder={t.checkPlaceholder}
                               value={editCheck}
                               onChange={(e) => setEditCheck(e.target.value)}
                             />
@@ -596,9 +696,11 @@ export default function App() {
                         ) : (
                           <>
                             <div className="claim">{item.claim}</div>
-                            <div className="check">
-                              {t.checkLine(item.check)}
-                            </div>
+                            {item.check && (
+                              <div className="check">
+                                {t.checkLine(item.check)}
+                              </div>
+                            )}
                           </>
                         )}
 
@@ -692,11 +794,6 @@ export default function App() {
                       placeholder={t.claimPlaceholder}
                       value={newClaim}
                       onChange={(e) => setNewClaim(e.target.value)}
-                    />
-                    <input
-                      placeholder={t.checkPlaceholder}
-                      value={newCheck}
-                      onChange={(e) => setNewCheck(e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && addItem()}
                     />
                     <div className="add-row">

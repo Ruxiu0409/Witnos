@@ -12,7 +12,7 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::paths;
+use crate::paths::{self, Resolution};
 
 #[derive(Debug, Default, Deserialize)]
 struct HookInput {
@@ -38,8 +38,12 @@ fn try_deliver() -> Option<()> {
         .or_else(|| std::env::current_dir().ok())?;
 
     let (root, marker_path) = paths::find_marker(&cwd)?;
-    let marker: paths::Marker =
-        serde_json::from_str(&std::fs::read_to_string(&marker_path).ok()?).ok()?;
+    let marker = paths::read_marker(&marker_path)?;
+    // A session without a goal has no contract to deliver — the UPS hook
+    // creates one on the next prompt; the gate catches the turn's end.
+    let Resolution::Entry(entry) = marker.resolve(Some(&session)) else {
+        return Some(());
+    };
 
     let delivered_path = root.join(paths::DELIVERED_REL);
     let mut delivered: HashMap<String, u64> = std::fs::read_to_string(&delivered_path)
@@ -52,8 +56,8 @@ fn try_deliver() -> Option<()> {
         .get(&session)
         .copied()
         .unwrap_or(0)
-        .max(marker.agent_synced_version);
-    if since >= marker.contract_version {
+        .max(entry.agent_synced_version);
+    if since >= entry.contract_version {
         return Some(()); // unchanged: zero-cost silent pass
     }
 
@@ -65,7 +69,7 @@ fn try_deliver() -> Option<()> {
     let body: Value = agent
         .get(&format!(
             "http://127.0.0.1:{}/goals/{}/contract?since={}",
-            ep.port, marker.goal_id, since
+            ep.port, entry.goal_id, since
         ))
         .set("Authorization", &format!("Bearer {}", ep.token))
         .call()
@@ -79,7 +83,9 @@ fn try_deliver() -> Option<()> {
     // makes the agent re-litigate passed work and burns tokens.
     let ctx = format!(
         "[witnos] The verification contract moved to v{version} (you were synced to v{since}). Changed items:\n{summary}\n\
-         Address the delta, update interpretations/evidence through the `witnos` CLI, then run `witnos reconcile --to {version}`."
+         Address the delta, update interpretations/evidence through the `witnos` CLI, then run \
+         `witnos reconcile --goal {} --to {version}`.",
+        entry.goal_id
     );
     println!(
         "{}",
@@ -92,10 +98,9 @@ fn try_deliver() -> Option<()> {
     );
 
     delivered.insert(session, version);
-    std::fs::write(
+    paths::write_atomic(
         &delivered_path,
-        serde_json::to_string_pretty(&delivered).ok()?,
-    )
-    .ok()?;
+        &serde_json::to_string_pretty(&delivered).ok()?,
+    );
     Some(())
 }
