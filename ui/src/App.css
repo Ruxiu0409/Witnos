@@ -685,12 +685,6 @@
   color: var(--warn);
 }
 
-.banner.needs {
-  background: var(--ok-bg);
-  border: 1px solid var(--ok);
-  color: var(--ok);
-}
-
 /* The agent hasn't read the latest contract yet, and the offer to push it into
    its terminal sits inside the same line that says what the gate will do
    anyway. Accent, not warn: nothing is wrong, there is just something to send. */

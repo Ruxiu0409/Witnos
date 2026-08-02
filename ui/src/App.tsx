@@ -662,11 +662,6 @@ export default function App() {
   // The selected goal's agent session has ended. A closed goal already says the
   // stronger version of this, so it keeps that banner and this one stays quiet.
   const ended = !!goal && goal.status !== "closed" && goneFor === goal.id;
-  // Every lever that only bites on a future stop is dishonest here, so the copy
-  // that offers one changes with it: there is no next stop to block.
-  const needsNote = ended
-    ? t.needsBannerEnded(needsYou.length)
-    : t.needsBanner(needsYou.length);
   // An edit of the human's own that the agent hasn't read. Not `contract_version`:
   // the agent bumps that itself every time it lays items, before it reconciles,
   // so keying on it made the banner appear during ordinary mid-run work — noise
@@ -759,7 +754,7 @@ export default function App() {
             needsYou.length > 0 && (
               <span
                 className="tb-count needs"
-                title={needsNote}
+                title={t.needsRulingDot}
                 data-tauri-drag-region
               >
                 <Icon name="scale" size={12} /> {needsYou.length}
@@ -1161,9 +1156,6 @@ export default function App() {
                       same voice. The contract stays exactly as it is: editing and
                       waiving still work, and re-issuing the goal is the way out. */}
                   {ended && <div className="banner ended">{t.endedBanner}</div>}
-                  {needsYou.length > 0 && (
-                    <div className="banner needs">{needsNote}</div>
-                  )}
                   {/* The versions the agent is behind by stay out of this line:
                       they name the gap precisely, but no other surface in the app
                       shows a v-number, so there is nothing for the reader to
