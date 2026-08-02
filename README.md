@@ -1,50 +1,36 @@
 <p align="center">
-  <img src=".github/assets/hero.png" alt="Witnos" width="136" />
+  <img src=".github/assets/hero.png" alt="Witnos" width="126" />
 </p>
 
 <h1 align="center">Witnos</h1>
 
-<p align="center">
-  <strong>Stop letting your coding agent grade its own homework.</strong>
-</p>
-
-<p align="center">
-  Witnos gives Claude Code a living definition of done —<br />
-  visible, evidence-backed, and editable while it works.
-</p>
+<p align="center"><strong>Stop letting your coding agent grade its own homework.</strong></p>
+<p align="center">See what Claude plans to verify. Change it while it works. Block “done” when the evidence no longer matches.</p>
 
 <p align="center">
   <a href="https://github.com/Ruxiu0409/Witnos/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Ruxiu0409/Witnos/ci.yml?style=flat-square&label=ci" alt="CI" /></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue?style=flat-square" alt="License" /></a>
+  <img src="https://img.shields.io/badge/status-developer%20preview-orange?style=flat-square" alt="Developer Preview" />
   <img src="https://img.shields.io/badge/platform-macOS-lightgrey?style=flat-square" alt="macOS" />
   <img src="https://img.shields.io/badge/data-local%20only-6f42c1?style=flat-square" alt="Local only" />
 </p>
 
+<p align="center"><strong>English</strong> · <a href="README.zh-Hant.md">繁體中文</a> · <a href="README.ja.md">日本語</a></p>
+
 <p align="center">
-  <strong>English</strong> ·
-  <a href="README.zh-Hant.md">繁體中文</a> ·
-  <a href="README.ja.md">日本語</a>
+  <img src=".github/assets/workflow.svg" alt="Define evidence-backed completion criteria, edit them while Claude works, then gate done against the latest version." width="100%" />
+  <sub>Claude Code stays the agent. Witnos only exposes and gates its verification.</sub>
 </p>
 
----
+## At a glance
 
-Agents rarely fail loudly. They choose a plausible standard, verify against it, and confidently stop. On a long run, a wrong assumption in step one becomes architecture by step ten.
+| **Evidence attached**<br>Files, URLs, and commands | **Live edits**<br>Only changed criteria are sent | **Stop gate**<br>Checks the latest version |
+|:---|:---|:---|
+| **One goal per session**<br>No mixed-up contracts | **Persistent terminal**<br>Shell survives app restarts | **Local-only BYOK**<br>No cloud or token proxy |
 
-**Witnos makes the definition of done visible while correction is still cheap.**
+## Install from source
 
-## How it works
-
-1. **Make the completion criteria explicit.** Claude lays out each criterion as a claim, a check, and the evidence behind it.
-2. **Change it live.** Edit a criterion while Claude is working. The delta reaches it after its next tool call.
-3. **Gate “done.”** When Claude tries to stop, Witnos checks the latest contract and sends it back if the evidence is stale or incomplete.
-
-Witnos is not another agent. You keep Claude Code, your credentials, and your workflow. Witnos only makes verification visible and steerable.
-
-## Install
-
-> **Developer Preview** — macOS + Claude Code only. Witnos is currently built from source and is unsigned / unnotarized.
-
-Requirements: [Rust via rustup](https://rustup.rs), Node.js <code>^20.19.0</code> or <code>>=22.12.0</code>, and Claude Code.
+**Requires:** macOS · Claude Code · [Rust via rustup](https://rustup.rs) · Node.js 20.19.x or ≥22.12
 
 ~~~sh
 git clone https://github.com/Ruxiu0409/Witnos.git
@@ -52,44 +38,36 @@ cd Witnos
 ./scripts/install-app.sh
 ~~~
 
-The installer builds everything, installs <code>/Applications/Witnos.app</code>, verifies the bundled CLI, and opens the app. Pass <code>--no-open</code> to keep it closed.
+<details>
+<summary><strong>What the installer does</strong></summary>
+
+Builds the app and CLI, installs <code>/Applications/Witnos.app</code>, verifies the bundled CLI, and opens Witnos. Pass <code>--no-open</code> to keep it closed.
+</details>
 
 ## Start in 30 seconds
 
-1. Open Witnos and click **watch a project (auto)**.
-2. Pick a project folder; trust it in Claude Code and approve the hooks with <code>/hooks</code> if prompted.
-3. Start <code>claude</code> inside Witnos's terminal.
-4. Send your first prompt. It becomes that session's goal and its verification contract appears automatically.
+| **1 · Watch** | **2 · Approve** | **3 · Launch** | **4 · Prompt** |
+|:---|:---|:---|:---|
+| Pick a project | Trust the folder; approve <code>/hooks</code> | Run <code>claude</code> inside Witnos | First prompt becomes the goal |
 
-Now edit the contract whenever the evidence reveals something you forgot to say.
+> [!IMPORTANT]
+> Only watched projects use the Stop gate; Claude sessions started in other terminals are untouched. Stuck after a crash? Reopen Witnos or run <code>/Applications/Witnos.app/Contents/Resources/bin/witnos disarm</code> from the project root.
 
-### A concrete example
+<details>
+<summary><strong>Compatibility, scope, and recovery</strong></summary>
 
-You ask: **“Refactor auth without changing behavior.”** Claude runs the tests and prepares to stop. Then you notice keyboard navigation was never part of its standard. Add it to the contract. Witnos delivers the correction, makes the old evidence stale, and Claude cannot reuse the old “done.”
+| | Today |
+|---|---|
+| Works with | macOS + Claude Code |
+| App UI | English + Traditional Chinese |
+| Distribution | Source build; unsigned / unnotarized |
+| Not yet | Linux testing, Windows persistent terminals, subjective-judgement prompt hook |
 
-That is the whole point: **catch the wrong assumption before it compounds.**
+Use **stop watching** to opt out permanently. <code>disarm</code> is temporary for an auto-watched project; restarting Witnos re-enables it. Installed hooks remain inert while watching is off.
+</details>
 
-## What you get
-
-- **Evidence with provenance** — files, URLs, and recorded commands stay attached to the claim they support.
-- **One contract per session** — every watched Claude session gets its own goal from its first prompt.
-- **Corrections without interruption** — only the changed criteria are delivered, not the entire contract again.
-- **Terminals that survive the app** — quit and reopen Witnos without losing the shell or its conversation.
-- **Local by default** — local JSON, authenticated loopback traffic, no cloud, no telemetry, no credential proxy.
-
-## Safe by scope
-
-Only projects you explicitly watch enable the Stop gate. Auto-created goals only apply to Claude sessions started inside Witnos's terminal; your other terminals and projects are untouched.
-
-Use **stop watching** to opt out. If a crash leaves a watched agent at the Stop gate, reopen Witnos or run <code>/Applications/Witnos.app/Contents/Resources/bin/witnos disarm</code> from the project root. Installed hooks remain inert when watching is off.
-
-## Current limits
-
-Today Witnos is macOS-only, Claude Code-only, source-built, and unsigned. Linux is untested, Windows does not yet have the persistent terminal daemon, and the subjective-judgement prompt hook is still pending.
-
-For the reasoning behind those choices, read the [design notes](docs/README.md).
-
-## Development
+<details>
+<summary><strong>Build and contribute</strong></summary>
 
 ~~~sh
 npm ci --prefix ui
@@ -98,14 +76,9 @@ cargo test --workspace --exclude witnos-app
 cargo clippy --workspace --exclude witnos-app --all-targets -- -D warnings
 ~~~
 
-The workspace is split into a framework-free domain core, an Axum server, a headless hook CLI, and a Tauri + React desktop app. See [CLAUDE.md](CLAUDE.md) for the full development loops.
-
-## Contributing
-
-Issues and PRs are welcome. For a large change, open an issue first and read the [six design constraints](docs/design.md#design-principles-this-is-the-project-not-the-ui) — especially the rule that an agent may never pass its own subjective work.
+Issues and PRs are welcome. For large changes, open an issue first and read the [design constraints](docs/design.md#design-principles-this-is-the-project-not-the-ui). More loops live in [CLAUDE.md](CLAUDE.md); the full rationale is in the [design notes](docs/README.md).
+</details>
 
 ## License
 
-Copyright © 2026 CHENG YEH TSAI
-
-Dual licensed under [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE). Use whichever you prefer. Unless stated otherwise, contributions are licensed the same way.
+Copyright © 2026 CHENG YEH TSAI · [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE)

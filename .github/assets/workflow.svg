@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+  <title id="title">Witnos verification workflow</title>
+  <desc id="desc">Three stages: define completion criteria with evidence, edit them while Claude works, and gate completion against the latest version.</desc>
+
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#121318" />
+      <stop offset="1" stop-color="#1d1f28" />
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#7aa2f7" />
+      <stop offset="1" stop-color="#bb9af7" />
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="1" r="1">
+      <stop offset="0" stop-color="#7c3aed" stop-opacity="0.26" />
+      <stop offset="0.7" stop-color="#7c3aed" stop-opacity="0" />
+    </radialGradient>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse">
+      <path d="M28 0H0V28" fill="none" stroke="#ffffff" stroke-opacity="0.025" />
+    </pattern>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000000" flood-opacity="0.28" />
+    </filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0L7 3L0 6Z" fill="#7aa2f7" />
+    </marker>
+  </defs>
+
+  <rect width="1200" height="420" rx="26" fill="url(#bg)" />
+  <rect width="1200" height="420" rx="26" fill="url(#glow)" />
+  <rect width="1200" height="420" rx="26" fill="url(#grid)" />
+
+  <g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+    <g fill="none" stroke="url(#accent)" stroke-width="1.5" opacity="0.9">
+      <path d="M48 35h16l8 8-8 8H48l-8-8Z" />
+      <path d="M48 44h16l8 8-8 8H48l-8-8Z" opacity="0.5" />
+    </g>
+    <text x="88" y="50" fill="#c9ccd6" font-size="13" font-weight="700" letter-spacing="2.6">WITNOS / VERIFICATION LOOP</text>
+
+    <path d="M388 214H420" fill="none" stroke="#7aa2f7" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow)" />
+    <path d="M775 214H807" fill="none" stroke="#7aa2f7" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow)" />
+
+    <!-- 01 / define -->
+    <g filter="url(#shadow)">
+      <rect x="42" y="78" width="340" height="292" rx="19" fill="#1c1e26" stroke="#353846" />
+    </g>
+    <circle cx="75" cy="112" r="16" fill="#24334f" stroke="#7aa2f7" />
+    <text x="75" y="117" text-anchor="middle" fill="#a9c1fa" font-size="12" font-weight="800">01</text>
+    <text x="105" y="108" fill="#ffffff" font-size="21" font-weight="750">DEFINE</text>
+    <text x="105" y="129" fill="#8a8fa0" font-size="11" font-weight="650" letter-spacing="1.45">CLAIM · CHECK · EVIDENCE</text>
+
+    <rect x="66" y="153" width="292" height="191" rx="13" fill="#16171d" stroke="#2d303b" />
+    <rect x="82" y="170" width="260" height="45" rx="9" fill="#20232c" />
+    <rect x="94" y="183" width="19" height="19" rx="5" fill="#263c5f" />
+    <path d="M99 192l3 3 6-7" fill="none" stroke="#7aa2f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+    <text x="124" y="190" fill="#c9ccd6" font-size="11" font-weight="750" letter-spacing="1">CLAIM</text>
+    <rect x="124" y="198" width="148" height="4" rx="2" fill="#4b5061" />
+
+    <rect x="82" y="224" width="260" height="45" rx="9" fill="#20232c" />
+    <circle cx="103.5" cy="246.5" r="9.5" fill="#3a3049" />
+    <path d="M99 247h9M103.5 242.5v9" stroke="#bb9af7" stroke-width="1.6" stroke-linecap="round" />
+    <text x="124" y="244" fill="#c9ccd6" font-size="11" font-weight="750" letter-spacing="1">CHECK</text>
+    <rect x="124" y="252" width="178" height="4" rx="2" fill="#4b5061" />
+
+    <rect x="82" y="278" width="260" height="49" rx="9" fill="#20232c" />
+    <circle cx="103.5" cy="302.5" r="9.5" fill="#2c3f31" />
+    <path d="M99.5 302.5l2.6 2.6 5.3-6" fill="none" stroke="#9ece6a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+    <text x="124" y="299" fill="#c9ccd6" font-size="11" font-weight="750" letter-spacing="1">EVIDENCE</text>
+    <rect x="124" y="308" width="126" height="4" rx="2" fill="#4b5061" />
+    <rect x="258" y="308" width="44" height="4" rx="2" fill="#9ece6a" opacity="0.75" />
+
+    <!-- 02 / edit -->
+    <g filter="url(#shadow)">
+      <rect x="429" y="78" width="340" height="292" rx="19" fill="#1c1e26" stroke="#4b3d61" />
+    </g>
+    <circle cx="462" cy="112" r="16" fill="#3a3049" stroke="#bb9af7" />
+    <text x="462" y="117" text-anchor="middle" fill="#d7bdfb" font-size="12" font-weight="800">02</text>
+    <text x="492" y="108" fill="#ffffff" font-size="21" font-weight="750">EDIT LIVE</text>
+    <text x="492" y="129" fill="#8a8fa0" font-size="11" font-weight="650" letter-spacing="1.45">ADD · CHANGE · REMOVE</text>
+
+    <rect x="453" y="153" width="292" height="191" rx="13" fill="#16171d" stroke="#2d303b" />
+    <text x="470" y="181" fill="#6c7181" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11">CONTRACT</text>
+    <rect x="670" y="165" width="55" height="25" rx="12.5" fill="#29233a" stroke="#5e4a7a" />
+    <text x="697.5" y="182" text-anchor="middle" fill="#c9aef1" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11">v3 → v4</text>
+
+    <rect x="470" y="202" width="258" height="46" rx="9" fill="#20232c" />
+    <circle cx="490" cy="225" r="5" fill="#7aa2f7" />
+    <rect x="504" y="217" width="142" height="5" rx="2.5" fill="#606578" />
+    <rect x="504" y="229" width="98" height="4" rx="2" fill="#424654" />
+    <path d="M695 217l10 10m-8 2 10-10" stroke="#8a8fa0" stroke-width="1.6" stroke-linecap="round" />
+
+    <rect x="470" y="259" width="258" height="58" rx="9" fill="#25202f" stroke="#bb9af7" stroke-width="1.5" />
+    <circle cx="490" cy="288" r="9" fill="#bb9af7" />
+    <path d="M486 288h8M490 284v8" stroke="#17131e" stroke-width="1.8" stroke-linecap="round" />
+    <rect x="507" y="278" width="172" height="6" rx="3" fill="#d6c0f4" opacity="0.78" />
+    <rect x="507" y="292" width="128" height="4" rx="2" fill="#6d5b80" />
+    <path d="M701 292l13 13 4-18Z" fill="#ffffff" stroke="#25202f" stroke-width="2" stroke-linejoin="round" />
+
+    <!-- 03 / gate -->
+    <g filter="url(#shadow)">
+      <rect x="816" y="78" width="340" height="292" rx="19" fill="#1c1e26" stroke="#354638" />
+    </g>
+    <circle cx="849" cy="112" r="16" fill="#2c3f31" stroke="#9ece6a" />
+    <text x="849" y="117" text-anchor="middle" fill="#b9e494" font-size="12" font-weight="800">03</text>
+    <text x="879" y="108" fill="#ffffff" font-size="21" font-weight="750">GATE DONE</text>
+    <text x="879" y="129" fill="#8a8fa0" font-size="11" font-weight="650" letter-spacing="1.45">LATEST · FRESH · COMPLETE</text>
+
+    <rect x="840" y="153" width="292" height="191" rx="13" fill="#16171d" stroke="#2d303b" />
+    <path d="M986 174l35 12v29c0 26-14 47-35 56-21-9-35-30-35-56v-29Z" fill="#203326" stroke="#9ece6a" stroke-width="1.5" />
+    <path d="M970 220l11 11 22-26" fill="none" stroke="#9ece6a" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+
+    <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11">
+      <circle cx="874" cy="291" r="7" fill="#2c3f31" />
+      <path d="M871 291l2 2 4-5" fill="none" stroke="#9ece6a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+      <text x="889" y="295" fill="#9da1ad">CONTRACT v4</text>
+
+      <circle cx="988" cy="291" r="7" fill="#2c3f31" />
+      <path d="M985 291l2 2 4-5" fill="none" stroke="#9ece6a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+      <text x="1003" y="295" fill="#9da1ad">EVIDENCE FRESH</text>
+    </g>
+
+    <rect x="921" y="313" width="130" height="26" rx="13" fill="#9ece6a" />
+    <text x="986" y="330" text-anchor="middle" fill="#182018" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" font-weight="850" letter-spacing="1.2">STOP RELEASED</text>
+  </g>
+</svg>
