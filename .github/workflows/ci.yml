@@ -1,0 +1,101 @@
+# Runs on macOS because that is the only platform Witnos supports today (the
+# terminal daemon needs a readable foreground process group and a filesystem
+# socket; see the README's limits). Testing a platform the project doesn't
+# claim would only produce noise.
+#
+# Deliberately NOT here: `cargo fmt --check`. The codebase carries hand-chosen
+# formatting rustfmt would undo, so that gate would be red on day one and stay
+# red — a check nobody can satisfy teaches people to ignore the whole run.
+#
+# Only first-party actions are used. A tool whose pitch is "clean enough to
+# fork" should not ask a forker to trust third-party CI actions as well.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # A CI failure should be readable, not a stack trace hunt.
+  RUST_BACKTRACE: 1
+
+jobs:
+  # The light loop, same one the development docs tell you to run: everything
+  # except the Tauri stack, whose dependency tree costs several GB.
+  core:
+    name: core + cli
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-cargo-core-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-core-
+
+      - run: cargo clippy --workspace --exclude witnos-app --all-targets -- -D warnings
+      - run: cargo test --workspace --exclude witnos-app
+
+  frontend:
+    name: frontend
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - run: npm ci
+        working-directory: ui
+      - run: npx oxlint .
+        working-directory: ui
+      # `npm run build` is `tsc -b && vite build`, so this type-checks too.
+      - run: npm run build
+        working-directory: ui
+
+  # The GUI shell breaks in ways the other two jobs cannot see — it is the only
+  # crate that touches the IPC surface, and an IPC command left dangling after a
+  # core change compiles nowhere else. `check` rather than `test`: it has no
+  # tests of its own, and building the whole tauri tree twice buys nothing.
+  app:
+    name: gui shell
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-cargo-app-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-app-
+
+      # tauri-build validates that the bundle's resources exist, and frontendDist
+      # must be on disk before the Rust build — nothing in `cargo` builds it.
+      - run: npm ci && npm run build
+        working-directory: ui
+
+      - run: cargo check -p witnos-app --all-targets

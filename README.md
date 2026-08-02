@@ -1,308 +1,283 @@
-# Witnos
+<p align="center">
+  <img src=".github/assets/hero.png" alt="Witnos" width="150" />
+</p>
 
-> 名字取自 **witness**（見證）——agent 做的每件事都在使用者眼皮底下被看著。
+<h1 align="center">Witnos</h1>
 
-讓 AI coding agent 的「驗證」這一步從黑盒變透明、且能由人**即時協作編輯**的工具。
+<p align="center">
+  <strong>When your coding agent says "done", whose yardstick did it measure against?<br />
+  Witnos puts that yardstick on the table — and lets you change it while the agent is still running.</strong>
+</p>
 
-**狀態：v1 實作進行中（2026-07-26 動工）。** 本檔記錄設計脈絡與待驗證假設。已落地：hooks 行為 spike、契約 schema（兩者的完整記錄留在本地工作文件 `spike/`、`docs/`，未隨公開樹散布）、Rust workspace——`witnos-core`（型別／store／放行條件）、`witnos-server`（axum 核心，lib 形式、GUI 外殼內嵌）、headless bin `witnos`（雙 hook＋agent 子命令＋`pty-serve` 終端機 daemon）、Tauri 外殼與前端。未動工：主觀判斷 prompt hook。（`witnos init`、UserPromptSubmit 綁定＋協議注入 hook、`witnos goal new` 已落地；契約書寫規範由 UserPromptSubmit hook 每 session 注入一次，不寫進任何檔案。**2026-07-29 落地 auto 模式**：在 app 選一個專案目錄開「自動監看」後，**在 app 內建終端機裡啟動的** agent session，第一個 prompt 自動建立該 session 專屬的目標並上膛；在其他終端機裡啟動的 session 不在範圍內——不建目標、不注入協議、也不會被攔停（範圍記號 `WITNOS_TERMINAL`，app 開的每個 shell 都蓋上，agent 與它跑的 hook 都繼承得到）。marker 升級為 session-keyed 的 v2、`witnos` bin 隨 app 打包、hooks 與協議全用絕對路徑，使用者不必碰 PATH。）開發指令見 `CLAUDE.md`。
+<p align="center">
+  <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue?style=flat-square" alt="License" /></a>
+  <a href="https://github.com/Ruxiu0409/Witnos/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Ruxiu0409/Witnos/ci.yml?style=flat-square&label=ci" alt="CI" /></a>
+  <img src="https://img.shields.io/badge/status-v1%20WIP-orange?style=flat-square" alt="Status" />
+  <img src="https://img.shields.io/badge/platform-macOS-lightgrey?style=flat-square" alt="Platform" />
+</p>
+
+<p align="center">
+  <strong>English</strong> ·
+  <a href="README.zh-Hant.md">繁體中文</a> ·
+  <a href="README.ja.md">日本語</a>
+</p>
+
+<p align="center">
+  <a href="#install-and-run">Install</a> ·
+  <a href="#in-thirty-seconds">In 30 seconds</a> ·
+  <a href="#what-it-actually-does">Features</a> ·
+  <a href="#design-principles-this-is-the-project-not-the-ui">Design principles</a> ·
+  <a href="#roadmap">Roadmap</a>
+</p>
 
 ---
 
-## 安裝與執行
+## In thirty seconds
 
-**先讀這段：目前只有 macOS 能用，而且是自用階段的東西。** 沒有預先編好的下載檔，你得自己 build。
+Wherever there is room to interpret "how do we know it's done", the agent verifies against its own standard and reports success — and that may not be what you meant. The longer it runs unattended, the more a deviation nobody caught in step one becomes the foundation everything after it is built on.
 
-需要 [Rust](https://rustup.rs)（工具鏈由 rustup 管，`~/.cargo/bin` 要在 PATH 上）與 Node 20+。
+Witnos is a thin layer over the coding agent you already use (Claude Code, today). It does three things:
+
+1. **Makes the agent lay out its verification.** Every criterion is written as claim + how it's checked + the evidence it judged completion by. Evidence must carry a provenance pointer — a file, a command, a URL — and the UI opens the original in one click.
+2. **Lets you change the yardstick mid-run.** Your edit reaches the agent through its own hooks on its next tool call. No interrupting it, no waiting for it to finish.
+3. **Intercepts "I'm done".** When the agent tries to stop, a Stop hook compares its work against the current contract and blocks until it lines up.
+
+It is **not** an agent and does not replace yours. You bring your own agent and credentials (BYOK); Witnos only makes the verification step visible and interruptible.
+
+The name comes from **witness** — every action the agent takes is watched under your eyes.
+
+> **This README is also the project's design document.** The first half is for people who want to run it. From [Design principles](#design-principles-this-is-the-project-not-the-ui) on is the full rationale and the bet the whole thing rests on — that part is the actual project.
+
+**Status: v1 in progress (started 2026-07-26).** Landed: the hooks-behaviour spike, the contract schema, and a Rust workspace — `witnos-core` (types / store / release condition), `witnos-server` (the axum core as a lib, embedded by the GUI shell), the headless `witnos` bin (both hooks + the agent-facing subcommands + the `pty-serve` terminal daemon), the Tauri shell and frontend. Auto mode landed 2026-07-29: point the app at a project directory, and every agent session started **from the app's own terminal** gets its own goal from its first prompt. Not built yet: the subjective-judgement prompt hook.
+
+---
+
+## Install and run
+
+**Read this first: macOS only today, and this is a tool its author is still dogfooding.** There are no prebuilt downloads — you build it yourself.
+
+You need [Rust](https://rustup.rs) (via rustup, with `~/.cargo/bin` on PATH) and Node 20+.
 
 ```sh
-git clone <this-repo> && cd Witnos
-cd ui && npm install && npm run build && cd ..   # frontendDist 必須先存在
-cargo build -p witnos-cli                        # 終端機跑在這支 bin 的 daemon 裡，先 build
+git clone https://github.com/Ruxiu0409/Witnos && cd Witnos
+cd ui && npm install && npm run build && cd ..   # frontendDist must exist before the Rust build
+cargo build -p witnos-cli                        # terminals run inside this bin's daemon
 cargo run -p witnos-app
 ```
 
-正式安裝成 `/Applications/Witnos.app`：`scripts/install-app.sh`（會自己 build 前端與 CLI、換掉舊版、再開起來）。
+To install it properly as `/Applications/Witnos.app`, run `scripts/install-app.sh` — it builds the frontend and the CLI, replaces any existing copy, and reopens the app.
 
-跑起來之後：在 app 裡按「監看專案（自動）」選一個專案資料夾——它會把 hooks 裝進那個專案的 `.claude/settings.json`。**接著要在 Claude Code 裡信任該資料夾**（新 hooks 可能需要 `/hooks` 核准）。然後**在 app 內建的終端機裡**啟動 Claude Code，你打的第一個 prompt 會自動變成一個目標，那個 session 的驗證契約就開始運作了。在其他終端機開的 session 不在範圍內——不建目標、也不會被攔停。
+Once it's running: click **watch a project (auto)** and pick a project folder. Witnos installs its hooks into that project's `.claude/settings.json`. **Claude Code must then trust that folder** (new hooks may need `/hooks` approval). Now start Claude Code **inside the app's own terminal** — your first prompt becomes a goal, and that session's verification contract goes live. Sessions started in any other terminal are out of scope: no goal, no injected protocol, never stalled.
 
-不用 Witnos 時要退場：在 app 裡對該專案按「停止監看」。若 app 崩潰導致 agent 卡在 Stop 閘門，`witnos disarm` 可以就地解開（訊息會告訴你 app 重啟時會重新上膛）。
+To stop: click **stop watching** on that project. If the app crashed and left an agent stalled at the Stop gate, `witnos disarm` releases it in place (the message tells you the app will re-arm on restart).
 
-### 目前的限制（都是刻意的，不是待修 bug）
+### Current limits — all deliberate, none of them bugs awaiting a fix
 
-- **只有 macOS。** Windows 沒有終端機 daemon（ConPTY 給不出可讀的 foreground process group，也沒有檔案系統 socket），所以那邊的終端機會隨 app 一起死；`scripts/install-app.sh` 也是 POSIX-only。Linux 未實測。
-- **未簽章、未公證。** 自己 build 自己跑，沒有要發佈給別的機器的打算。
-- **只支援 Claude Code。** 抽成 agent-agnostic 格式是 roadmap 第 4 步。
-- **app 關著的時候沒人在看。** 正常退出會退膛（不會留下卡住的 agent），但**崩潰**會留著上膛標記，那個還活著的 agent 會在下一次 Stop 卡住——見〈v1 技術選型〉的上膛／退膛協議。
-- **主觀判斷的 prompt hook 還沒做。**
+- **macOS only.** Windows has no terminal daemon (ConPTY offers neither a readable foreground process group nor a filesystem socket), so terminals there die with the app; `scripts/install-app.sh` is POSIX-only. Linux is untested.
+- **Unsigned, un-notarized.** Build it and run it yourself; shipping to other machines isn't the point yet.
+- **Claude Code only.** Abstracting the format so a second agent can be swapped in is step 4 of the roadmap.
+- **Nobody is watching while the app is closed.** A graceful quit disarms (no stray stalls), but a **crash** leaves the armed marker, and a surviving agent will stall at its next Stop against a core that isn't there.
+- **The subjective-judgement prompt hook isn't built yet.**
 
-開發指令（測試、lint、各種 build 迴圈）見 `CLAUDE.md`。
-
----
-
-## 這是什麼
-
-一個 local-first、開源的薄層工具。它掛在你既有的 coding agent（Claude Code / Codex 等）之上，把 agent 在長時間自動執行任務時，**它打算怎麼驗證「自己有沒有做到」這件事攤開給你看，並且讓你能在過程中補上、修正它的驗證標準。**
-
-它不是一個 agent，也不取代你的 agent。你自帶 agent，它只負責讓那個 agent 的驗證環節變得可被人看見、可被人介入。
+Development commands — tests, lint, the various build loops — are in `CLAUDE.md`.
 
 ---
 
-## 為什麼需要它
+## What it actually does
 
-現在的 agent 大致跑一個迴圈：**推理 → 行動 → 觀察 → 重複**（近期被稱為 loop engineering）。問題出在「觀察／驗證」這一步。
+**📋 A living contract, not an upfront spec.** The checklist stays editable for the whole run. Editing an item bumps the contract version; after the agent's next tool call, the changed items are injected into its conversation — **always a delta, never the whole list**, because re-feeding hundreds of items makes the agent re-litigate work it already finished and burns tokens doing it.
 
-真正的問題不是「目標客觀還是主觀」，而是：**使用者跟 agent 對「怎麼算做到了」的認知，有沒有可能不一樣。** 只要有這個落差的空間，agent 就會拿它自己那套標準去自我驗證、然後回報「完成了」，而那不是使用者要的東西。
+**🔒 "I'm done" gets intercepted, and it fails closed.** When the agent tries to stop, the gate checks: objective items passed, every subjective item carrying an interpretation and fresh evidence, reconciled against the latest version. If Witnos is unreachable, the gate **blocks rather than releases** — the interception *is* the product, so it cannot quietly disappear when the service is down. This applies only to watched projects; everything else is untouched.
 
-這條線跟「主客觀」不重合。主觀目標當然容易有落差——「做一個 Apple 風格的 App」，雙方對「Apple 風格」的認知本來就不同。但**看似客觀的目標，驗證方式本身也可能有歧義**：「能不能 build」聽起來很硬，可是「在哪個環境、哪個版本、要不要連測試一起綠才算過」——光是「怎麼算 build 過了」就有解讀空間。所以重點不在目標的性質，在於**雙方對驗證方式的理解是否一致**。
+**🔍 Evidence must carry its provenance.** Every piece of evidence names a file, a command, or a URL, and the UI opens the original in one click. It also logs "the human opened the original, then changed a criterion" — the signal that keeps human judgement from decaying into a rubber stamp, and the direct readout of this project's core bet.
 
-這個落差本身是個老問題（specification gap、oracle problem、Goodhart's law 都是它的親戚），但**長時間自動執行**讓它變嚴重：在人不在場、agent 連續跑很久的情境下，第一步沒被抓到的偏差會變成下一步的地基，一路無聲地複利累積，等 agent 說「完成」時，歪掉的已經是一整條決策鏈，而不是一個檔案。
+**⚖️ The agent may never pass a subjective item itself.** Classification defaults to subjective; an item counts as objective only if it carries a machine-executable oracle (a command plus its expected output). Misclassification always errs toward showing the human more.
 
-**核心觀點：只要「怎麼算完成」存在使用者與 agent 認知不一致的空間，agent 就不該獨自決定自己過關。人需要一個能看見、且能介入那把尺的地方。**
+**🖥 Terminals outlive the app.** The agent runs in the app's own terminal, and those shells live in a separate daemon — quit Witnos, reopen it, and the session is still there with its conversation intact. (Not on Windows; see limits.)
 
----
+**↩︎ Your correction can reach an agent that already stopped.** After-the-fact judgement is worthless against an agent that has finished, so Witnos types the change into the terminal the agent runs in — after reading Claude Code's own title state, so it stays quiet while the agent is working (the delivery channel carries the change on its next tool call anyway).
 
-第一版的完整迴圈（用三個角色講：**使用者** = 那位有判斷力的工程師；**Agent** = Claude Code 那類實際寫 code 的 AI；**工具** = 本專案，中間那層介面）：
-
-1. **使用者**給目標。
-2. **Agent** 列出「我要驗什麼、怎麼驗、結果是什麼」，攤在**工具**上。
-3. **Agent** 開始跑。
-4. **使用者**隨時能在**工具**上加一條、改一條驗證——**不打斷 Agent**。
-5. **Agent** 每一輪檢查時，讀的是當下最新版的驗證內容（這就是「活契約」：執行中持續被重讀比對，不是執行前讀一次的死文件）。
-6. 若 Agent 發現現在做的跟最新版不符，它**照自己的理解先回去改 code**，然後把「我把你這條理解成 XXX、我改了這些、現在的證據長這樣」攤回**工具**上。
-7. **使用者**下次看的時候，判斷 Agent 改得對不對。
-
-**這個迴圈就是本專案，其他都是外圍。**
-
-### 收尾為什麼是「事後裁判」
-第 6、7 步是個刻意的選擇。當使用者改的是一條**主觀**驗證（例如「只能黑白灰」），「Agent 算不算符合這條」本身又是一次主觀判斷——照本專案原則該由使用者裁判。但若每次都停下來等使用者確認，又會不斷打斷。
-
-折衷是讓裁判**發生在事後**：如第 6、7 步，Agent 不停下、照自己的理解先改、並把它的理解攤回面板，使用者在下次看的時候才裁判。這樣不打斷流程，又守住「主觀的事使用者說了算」。代價與配套見設計原則 6。
-
-### 為什麼價值在「趁早」
-迴圈本身保證最後會收斂到「符合最新版清單」；本工具的價值不在「保證正確」，而在**讓人有機會趁偏差還沒擴散成下游地基時、用最低的返工成本就攔截它**。改得越早，Agent 回頭要動的東西越少。
+**🔑 BYOK.** Your tokens are never touched or proxied. Entirely local-first: no cloud, no data collection of any kind.
 
 ---
 
-## 設計原則（這些是這個專案的真正內容，不是 UI）
+## Why it exists
 
-### 1. 證據優先於意圖（Evidence over intent）
-不要只讓 agent 寫下「我打算驗證什麼」——意圖是會說謊的，「我確認過符合 HIG」這種話沒法檢查。要讓 agent 攤出**它據以判定完成的證據**：它做出來的截圖、偵測到的色票清單、量到的對比度數字。
+Agents run a loop: **reason → act → observe → repeat**. The weak step is *observe*.
 
-理由：人很不會「主動回憶起自己沒講的期待」，但人很會「被眼前的證據戳到」。當色票清單上跳出五種顏色，使用者「只要黑白灰」那個默會期待會被**勾出來**，他不需要事先想到它。把問題從「靠人主動回憶」變成「靠證據被動觸發」。
+The real problem isn't whether a goal is objective or subjective — it's whether **your understanding of "how do we know it's done" can differ from the agent's.** Wherever it can, the agent verifies against its own standard, reports success, and hands you something else.
 
-### 2. 主觀項目，人是最終裁判（Goodhart 護身符）
-本工具會引導 agent 把模糊標準拆解成可檢查的代理指標（把「Apple 風格」拆成色票數、字體、圓角半徑……）。**但代理指標永遠只是「溝通用的鷹架」，不是裁判。**
+That line does not coincide with subjective-versus-objective. Subjective goals obviously leave room — "make it feel like an Apple app" means different things to different people. But **apparently objective goals leave room in the verification itself**: "does it build" sounds hard-edged until you ask which environment, which version, and whether the tests have to be green too. What matters isn't the nature of the goal; it's whether both sides agree on how it gets checked.
 
-- **客觀項目**：agent 可以自己打勾、自己決定通過與否。
-- **主觀項目**：代理指標只負責「把證據端到人面前」，**agent 永遠不得自己宣告它通過**。
+The gap itself is an old problem — the specification gap, the oracle problem, and Goodhart's law are all relatives. **Long unattended runs make it acute**: with nobody watching, a deviation missed in step one becomes the foundation of step two, compounding silently, so that by the time the agent says "done" what's bent is an entire chain of decisions rather than one file.
 
-**2026-07-29 修正這條線的表達方式**：原本寫的是「通過與否一定要人點頭」，也真的做了一顆「核可」按鈕——後來拆掉了。因為它對 agent 零作用（放行條件本來就把「已攤出證據」與「已核可」當同一級），而人的誠實預設是「agent 做的先當成對的」。所以主觀項不再有「通過」狀態：終態就是「證據攤在那裡，人改過或沒改」。**Goodhart 這條線一步都沒退**——被禁止的是 agent 自己過關；人的槓桿改成三個動作：改尺、退回、豁免（這條不必檢查），每一個都會推進契約版本並真的傳到 agent 那邊。同意就是沉默，只有不同意才需要動作。
+**The core claim: wherever "done" can mean two different things, the agent must not be the sole judge of its own completion. The human needs somewhere that yardstick is visible and steerable.**
 
-**2026-08-02 又收掉一顆：退回。** 三個槓桿變兩個——改尺與刪除（同日豁免也換成刪除，見下）。「退回」的意思是「這條尺我留著，但你這份證據不算過」，可是改尺本來就會把項目打回未驗證、推進版本、讓證據變過期、當場經由送信通道傳到還在跑的 agent 手上——退回能做的它一件不少，連「一個字都不改、只是不接受這份證據」都可以用原句重存表達。而且多數時候，真正該動的正是那條尺：如果 agent 誤讀了它，把它寫清楚比對它說「重做」有用得多。兩顆按鈕留著，差別只剩 agent 聽到的語氣，不值得在 domain 裡多養一個狀態、多一條 HTTP 路徑、多一格 UI。原則 6 那個「先開過證據原物才動手」的防橡皮章訊號沒有跟著消失：它從退回搬到了編輯上。
+### The loop
 
-**同日，「豁免」也換成直接刪除。** 原本豁免是把項目留在契約裡、標成「沒人檢查」；但不想檢查的條件就不該留著佔位——契約堆滿墓碑，正是原則 4 要砍掉的閱讀量。所以 ✕ 現在是刪除：項目連同它的證據一起離開契約（沒人持有的條件，它的證據是死重），按一下先問、再按一下才真的刪，因為救不回來。舊存檔裡的 waived 項仍然被守門略過——把它讀成「未驗證」等於偷偷把主人早就放棄的檢查重新武裝起來。刪除比豁免多一個要補的坑：**被刪掉的項目不可能出現在「有哪些項目變了」的 delta 裡**（那一列不存在了），所以送信通道另外算一份「被移除了什麼」，用 claim 原文告訴還在跑的 agent 別做了——否則它會一路為一條沒人持有的尺產證據，直到撞上「找不到這個項目」才知道。
+Three roles: **User** (a capable engineer), **Agent** (the AI writing the code), **Tool** (this project, the layer between them).
 
-一旦為了「更自動」而讓主觀項目也能靠代理指標自動通過，就會掉進 Goodhart 陷阱——agent 去滿足那些數字，做出一個「每項指標都對、但整體就是很怪」的東西。這條線必須守死。
+1. The user gives a goal.
+2. The agent lays out "what I'll verify, how, and the result" onto the tool.
+3. The agent starts running.
+4. The user can add or edit a criterion at any time — **without interrupting the agent**.
+5. On each check round the agent reads the **current latest version** of the contract. That is what "living" means: continuously re-read during execution, not a static document read once at the start.
+6. When the agent finds its work no longer matches, it **fixes the code first, on its own reading**, then lays back: "I interpreted your criterion as X, here's what I changed, here's the evidence."
+7. Next time the user looks, they judge whether the agent got it right.
 
-這條線還有一個側門：**「哪條算客觀」的分類若由 agent 自己決定，它把主觀項誤標成客觀，就等於繞過裁判。** 所以分類規則畫死：**預設一律主觀；只有掛著機器可執行 oracle（一條指令＋預期輸出）的項目才算客觀**；人可以明確把某條升級為客觀，那是人自己扛。分類錯誤的方向，永遠往「多給人看」倒。
+**That loop is the project. Everything else is periphery.**
 
-### 3. 活契約，不是事前規格（Living contract, not upfront spec）
-不依賴「使用者一開始就把需求講清楚」——主觀、默會的東西本來就講不清楚，講得清楚就不需要人了。驗證清單在整個迴圈過程中持續可編輯、持續被重新比對。
+**Why judgement happens after the fact.** When the user edits a *subjective* criterion, deciding whether the agent now satisfies it is itself a subjective judgement — which by this project's own rules belongs to the human. But stopping to ask every time would interrupt constantly. So the agent never waits: it acts on its own reading and lays its interpretation back, and the human rules later. The cost of that choice, and what pays for it, is design principle 6.
 
-### 4. 分流，只讓需要人腦的浮上來（Triage what surfaces）
-寫得越詳細，人要看的越多——這是個真實矛盾。三小時的任務可能驗幾百項，若全部攤出來，使用者根本看不完，於是乾脆不看，做了等於沒做。解法不是「希望人有耐心讀完」，而是**分流**：讓 agent 自己消化掉那些安全、不需要人管的項目，只把真正需要人判斷的少數浮上來。
-
-（具體用什麼維度來判斷「哪些需要人判斷」，刻意先不寫死，留待實作時看真實資料再定。見 Roadmap。）
-
-### 5. 控制的單位是「單一目標」，監控可逐目標自由加入（Per-goal monitoring）
-先澄清執行模型：一個專案通常是一連串**獨立下達**的目標（例如 20 個），每次下一個目標就是一次獨立的執行，彼此不重疊。在**單一目標的執行之內**，Agent 一路跑到完成，過程中持續回頭比對活契約（即〈怎麼運作〉的核心迴圈）——它**不會停下來等人**。
-
-所以「想掌握時才掌握、平常去忙別的」**不是**「一次執行裡要不要設一道停下等人的閘門」，而是更單純的一件事：**使用者逐個目標決定，這一個我要不要在旁邊看著、即時編輯它的驗證。**
-
-- **想盯的目標** → 在旁監控，邊跑邊編輯驗證（核心迴圈第 4–7 步），趁早對齊。
-- **沒空的目標** → 不在場，它自己跑完；若結果不對，就重新下這個目標。
-
-監控是**逐目標、隨時可加入**的：可以盯前 5 個、放掉中間 15 個、等突然有空再回來盯最後 5 個。因為每個目標都是獨立的一次下達，「現在開始盯下一個」隨時成立，不需要事先決定。
-
-### 6. 事後裁判要主動標記，否則等於 Agent 自己拍板
-「事後裁判」（見〈怎麼運作〉）有個內建責任：既然使用者的裁判發生在事後，工具就有義務確保使用者**不會錯過該裁判的那一刻**。
-
-如果 Agent 默默照自己的理解改了、攤回面板，但這件事被埋在一堆「已通過」的項目裡、使用者沒注意到「它對我這條的理解跟我想的不一樣」——那使用者就只是**名義上**有裁判權、實際上沒行使，結果等於 Agent 自己拍板。
-
-所以工具必須把「**Agent 對某條主觀驗證的理解或改動**」主動標記出來、讓使用者一眼看到，而不是混在已通過項裡。這其實就是原則 4「分流」的同一個機制——Agent 對主觀項的新理解，正是那種「該浮上來給人看」的東西。
+**Why the value is in being early.** The loop already guarantees eventual convergence on "matches the latest list". The tool's value is not correctness — it is giving a human the chance to catch a deviation *before* it spreads into the foundation of downstream work, at the lowest rework cost available.
 
 ---
 
-## 技術路線
+## Design principles (this is the project, not the UI)
 
-### 整合模型：自帶 agent（BYOK）
-使用者自帶他自己的 coding agent 與認證憑證。本工具不碰使用者的 token、不代理憑證。憑證與費用都留在使用者那邊。（參考 Open Design 的做法：本機 daemon + web 介面，掃描 PATH 找出可用的 agent CLI，用 per-agent adapter 接上去。）UI 的形式則已定案：**跨平台桌面應用程式，不是瀏覽器網頁**——見下方〈v1 技術選型〉。
+These six are hard constraints. Every implementation decision gets checked against them.
 
-**注意：不要走「挖出訂閱登入 token 自己驅動」這條路**——第三方 agent 以訂閱額度計費已被禁止（2026/02），且 OAuth token 會過期、技術上脆弱。正路是 API key，或（自用情境下）官方的 Agent SDK credit。
+### 1. Evidence over intent
 
-### 綁定機制：薄層掛在既有 agent 的 hook 上（Path A）
-不自建 agent runtime；蓋在既有 agent 的 lifecycle hook 之上。
+Don't let the agent merely write down what it *intends* to verify. Intent can lie and can't be checked — "I confirmed it matches the HIG" is unfalsifiable. Make it surface **the evidence it judged completion by**: the screenshot it produced, the colour swatches it detected, the contrast numbers it measured.
 
-目前最適合原型的基座是 **Claude Code**：
+The reason: people are bad at proactively recalling expectations they never voiced, and good at being triggered by evidence in front of them. When five colours show up in the swatch list, the user's unspoken "it should only be black, white and grey" gets *pulled out of them* — they never had to think of it in advance. The problem turns from "the human must remember" into "evidence triggers them passively."
 
-- **Stop hook**：在 agent 自認為「完成、要停」時觸發，可回傳 block 強制它繼續做，直到滿足放行條件（見〈v1 技術選型〉的中心狀態機）。這就是「攔下『我完成了』」的機制核心。
-- **http hook**：可帶 Authorization header 呼叫外部服務——讓驗證清單與判決邏輯住在本工具自己的後端。**注意：http hook 是 fail-open 的**（逾時、非 2xx、連不上 → agent 不會被擋、照樣繼續）。整個產品的核心就是那個 block，所以 **Stop 閘門不能用 http hook 做**——必須用一支 **fail closed 的 command hook 小程式**（上膛狀態下，連不到 Witnos 一律輸出 `{"decision":"block"}`），見下方〈v1 技術選型〉的 `witnos-gate` 與上膛／退膛協議。
-- **agent / prompt hook**：用（子）模型去做主觀驗證的判斷。
+### 2. For subjective items, the human is the final judge (the Goodhart safeguard)
 
-（Codex 目前 prompt / agent 型 hook 會被解析但跳過，只有 command hook 能用，故主觀驗證的成熟度落後。但 hooks 正在收斂成跨工具標準，因此**驗證清單格式應設計成與 agent 無關的中立格式**，方便日後換基座。）
+The tool guides the agent to decompose fuzzy standards into checkable proxy metrics. **But proxy metrics are only communication scaffolding, never the judge.**
 
-「活契約」不能只靠 Stop hook 實現——Stop 在 agent 自認完成時才觸發，對單一目標往往就是最後一刻；若中途的編輯全部堆到收尾才生效，那是收尾攔截，不是「趁早攔截」。所以契約要走兩條通道：
+- **Objective items**: the agent may self-check and self-pass.
+- **Subjective items**: proxy metrics only carry evidence to the human. **The agent may never declare one passed.**
 
-- **Stop hook＝守門**：agent 自認完成時，對照契約最新版決定放行或 block（放行條件見〈v1 技術選型〉的中心狀態機）。
-- **高頻 hook（PostToolUse）＝送信**：每次工具呼叫後做一次**純本地**的版本比對——契約版本沒變，零成本靜默放行；變了才向核心取回**差異的那幾條**、注入對話。
+*Revised 2026-07-29.* This used to read "passing requires a human nod", and there really was an approve button. It was removed: it changed nothing about the agent (the release condition already treated "laid" and "approved" alike), and the human's honest default is that the agent's work is presumed right. So subjective items have no pass state at all — the terminal state is "evidence laid, and the human either moved the yardstick or didn't." Agreement is silence; only disagreement needs an action.
 
-兩條通道共用同一個 store、同一支 `witnos-gate`（以子命令區分），但故障方向相反：**送信 fail open**（取不到差異就靜默跳過——反正最終結果有守門攔著）、**守門 fail closed**。注入與 block 的內容永遠是 delta、不是整份清單——幾百條每輪整份灌回 context，agent 會重新翻案已通過的項目，token 也燒不完。
+*Revised again 2026-08-02.* Two more levers went. **Send-back** meant "the criterion stands, but your evidence doesn't pass" — except editing already reopens the item, bumps the version, stales the evidence and reaches the running agent, so re-saving even the same words says the same thing; and when the agent misread a criterion, writing it clearer beats telling it "again". **Waiving** parked an item in a state nobody checked; a contract accumulating tombstones is exactly the reading load principle 4 exists to cut, so ✕ now deletes, evidence and all. The human has two levers left: **edit the yardstick, or delete the item.**
 
-### 證據的範圍（第一版做哪些）
-攤給使用者看的證據，有兩種可能的強度：
+Never let subjective items auto-pass on proxy metrics. That is the Goodhart trap: the agent satisfies the numbers and produces something where every metric is right and the whole is wrong. This line is held absolutely.
 
-- **（一）Agent curate 的證據** ——Agent 主動報告「我驗了什麼、結論、依據」。使用者看到的是 Agent 選擇要給他看的那些。
-- **（二）Agent 不能篩選的原始軌跡** ——Agent 實際做了什麼的被動紀錄：完整 diff、跑了哪些指令、輸出了什麼。工具被動記錄，非 Agent 挑選。
+There is a side door to guard. **If the agent decides which items count as objective, mislabelling one silently bypasses the judge.** So the rule is fixed: default subjective; objective requires a machine-executable oracle; a human may explicitly promote an item and take responsibility for it. Classification errors always fall toward showing the human more.
 
-**第一版只做（一），且包含協作編輯**——這才是核心迴圈。（二）**降為條件性的下一步**，刻意先不做，理由有二：
+### 3. A living contract, not an upfront spec
 
-1. 把（一）做出來，才會第一次拿到真實資料回答「Agent 自己 curate 出來的，到底夠不夠一個工程師施展判斷」——這個問題現在只能用猜的。
-2.（二）若不經篩選地把三小時任務的全部軌跡傾倒給人，會變成「看不完 → 不會看 → 等於沒做」，反而違反原則 4（分流）。所以（二）真要做，形態也不能是「傾倒原始軌跡」，而得是「被篩成兩三條、人掃一眼就能判斷」。
+Don't depend on the user specifying requirements correctly at the start. Subjective and tacit things are inherently unspecifiable — if they could be spelled out, you wouldn't need the human. The list stays editable and re-compared throughout.
 
-**（二）的觸發條件：**（一）被驗證為不足、**且能看出不足在哪**。那個「不足在哪」會直接告訴你（二）該用什麼規則去篩，而不是現在憑空設計一個篩選器。
+### 4. Triage what surfaces
 
-**（一）要自帶「發現自己不足」的感測器。** agent-curated 的證據若不帶出處，「（一）不足」這件事永遠不可觀測，上面的觸發條件形同虛設。所以每條證據必附**出處指標**（檔案路徑、跑過的指令、URL），UI 一鍵打開原物比對；並記錄「人點開原物之後，改了某條尺或加了新條目」的事件——這份 log 累積起來，就是（二）該用什麼規則篩的需求規格，也是原則 4 分流維度的原始資料。證據另蓋**擷取當下的 workspace 指紋**（commit／dirty hash），代碼之後又動過就標「證據已過期」，免得人對著過時的截圖放行。
+More detail means more for the human to read, and that is a real conflict. A three-hour task may involve hundreds of verifications; dump them all and the user reads none, which is the same as not building it. The answer is not "hope they're patient" — it's **triage**: let the agent digest the safe items nobody needs to see, and surface only the few that genuinely need human judgement.
 
-### v1 技術選型（已定）
+(Exactly which dimensions decide "needs a human" is deliberately left open until there is real data. See the roadmap.)
 
-**形態已定案：跨平台桌面應用程式，不是網頁。** 以下是 v1 的具體形狀，每一條都是對著本專案的價值挑的（薄層、容易被 fork、fail-closed 的閘門、與 agent 無關）。目前仍未動工——這些是實作必須遵守的約束。
+### 5. The unit of control is a single goal; monitoring is opt-in per goal
 
-- **外殼：Tauri 2**（Rust 原生核心 + 作業系統內建 webview），跨平台（macOS + Windows + Linux），可安裝的原生 app、不是瀏覽器分頁。排除的選項：全原生 Swift（只剩 macOS、失去 TS 生態重用）；Electron／Node sidecar（前者整包扛一個 JS runtime，後者踩到 Tauri 已拒修的 `externalBin` 公證 bug）。
+A project is a series of independently issued goals. Within one goal's execution the agent runs to completion — it **does not stop to wait for anyone**.
 
-- **佈局：一個 Cargo workspace、兩個 Rust bin、一個 TS 前端。**
-  1. **GUI 核心**（Tauri app 本體）：啟動時 `tokio::spawn` 一個 **axum** server，綁在 `127.0.0.1` 的**臨時 port**，把 `{port, token}` 寫進 `~/.witnos/endpoint.json`（權限 `0600`）。提供 `POST /gate`（外加閘門所需的 CRUD）。
-  2. **`witnos-gate`**：同一個 workspace 裡**另一支不依賴 `tauri` crate 的無 GUI bin**（因此不連結任何 webview runtime——幾百 KB、毫秒級啟動、headless／CI 也能跑），以子命令同時擔任 **Stop（守門）與 PostToolUse（送信）** 兩個 command hook（見〈綁定機制〉）。守門流程：從 stdin 讀 hook JSON → 讀上膛標記（見下方上膛／退膛協議）與 `endpoint.json` → 帶 bearer token POST 給核心 → **上膛狀態下 fail closed**：碰到任何錯誤（連線被拒、逾時、非 2xx、回應格式不對、endpoint 檔不存在）一律輸出 `{"decision":"block", ...}` 後退出；**沒有上膛標記則放行**（這個專案根本沒在被盯）。重點就在把承重路徑維持在單一語言、單一 repo。
+So "pay attention when I want to" is not a stop-gate inside a run. It is simply: **the user decides, per goal, whether to watch this one and live-edit its verification.** Watch goals 1–5, ignore 6–20, come back for the last five. Each goal is an independent issuance, so "start watching the next one" is always available and never has to be decided in advance.
 
-- **前端：webview 裡的 TS SPA（React 或 Svelte）。** 參考專案（nexu-io/open-design、OpenCoworkAI/open-codesign）真正搬得動的是 **live 面板的 UI**，不是它們的 Node daemon；daemon 那一半改用 Rust 重寫——是一次**有邊界的翻譯**（一條 gate 路由 + 一個 JSON store + 一次 PATH 掃描），不是重新設計。這是選擇桌面原生要誠實付的代價。
+### 6. After-the-fact judgement must be actively flagged, or it equals the agent deciding alone
 
-- **介面圖示：內嵌 Lucide 的 path，不是 emoji、也不能是 SF Symbols（2026-07-30）。** 原本用 emoji 撐著，但 emoji 是裝飾不是介面：自帶顏色、自帶字面度量、每個作業系統一張臉——密集的工具型介面必須掌控的三件事，它三件都不給。SF Symbols 兩條路都不通：授權只允許用在「跑在 Apple 作業系統上的軟體介面」，webview 裡的網頁與跨平台 app 都不在範圍內；而且 Windows／Linux 上根本沒有那套字型，形態選型早就把它們算在裡面了。做法是把 Lucide（ISC）的十四個 path 內嵌進 `ui/src/Icon.tsx` 一個檔案：以 `currentColor` 描邊，所以一個圖示就是它旁邊那行字的顏色——`--dim`／`--accent`／`--bad` 與深淺兩套主題全部自動生效，不必為圖示再開一組色票；共用同一個 24 網格，彼此對得齊，也對得上介面裡原本就手寫的那兩個側欄開合圖示。**內嵌而不是 `npm i lucide-react`**：整個 app 只用到十四個，為此扛一個依賴，對想 fork 的人來說要解釋的東西比那些 path 本身還多（「乾淨到容易看懂、容易 fork」是本專案的功能之一）。key 沿用 Lucide 原名，任何一個都能回 lucide.dev 查證或替換。刻意留成文字的例外有兩類：真正的鍵盤符號（`<kbd>` 裡的 ⌘），以及 Claude Code 自己寫進終端機標題的狀態標記（`·`／`✳`）——後者是拿來 parse 的資料，不是畫給人看的圖示。
+Since the human's ruling happens later, the tool is obliged to make sure they don't miss the moment they should look.
 
-- **儲存：每個目標一個 serde-JSON 檔，包在 `RwLock` 後面**（最薄、最好 fork、符合 local-first 單人定位）。等真的出現「webview 端編輯」與「閘門端讀取」的並發爭用再換 `rusqlite`。GUI 核心與閘門打的是**同一個 in-process store**——人改到的就是閘門每一輪讀到的，「活契約」不需要任何跨行程同步。
+If the agent quietly reinterprets a criterion, fixes the code and lays it back — and that gets buried among a hundred passing items — then the human holds judgement in name only, and the agent has effectively decided alone.
 
-- **中心狀態機：閘門的放行 ≠ 項目的通過。** agent 永不等人——所以 Stop 的放行條件是「客觀項全過 ∧ 主觀項都已攤出詮釋＋證據 ∧ 已對齊契約最新版」，**不是**「全部通過」；「agent 已收工、證據攤著等人看」是目標的正常結束態。**不想檢查的項目直接從契約刪掉**（連同證據），那是原則 5「逐目標選擇監看」在單一項目上的另一半；舊存檔裡被豁免的項目則在放行條件的每一條之前就被略過（不攔、不要求證據）。契約帶單調遞增的版本號（同時鏡射進上膛標記檔，讓送信通道的「沒變化」判斷不必碰網路）；每條證據、每次 reconcile 都蓋「對齊到第 N 版」的章——事後裁判的信任基礎，是能證明「agent 看過我那條修改」。目標收攤後清單仍可查看，但 UI 要明說「不再有 agent 讀這裡；要變更就重新下目標」（原則 5 的邊界）。
-
-- **主觀項的判斷 = Claude Code 自己的 prompt／agent hook**（裝在 `settings.json`），由 Claude Code 拿**使用者自己的憑證**去跑。v1 的 Witnos 行程內**完全不必接 LLM**——「Rust 沒有 Anthropic Agent SDK」因此不構成問題。Rust 核心只負責儲存 agent 的理解與證據，並主動標記重新詮釋（原則 6）。
-
-- **人的兩個槓桿都會推進版本（2026-07-29 立，2026-08-02 由三收成二）。** 改尺與刪除各自都 bump `contract_version`（改尺另蓋該項的 `last_edited_version`）——這才是它們能傳到**還在跑**的 agent 的原因（PostToolUse 送信通道靠版本比對），而不是只在它想收工時才於閘門撞到。只改狀態而不 bump 的動作對送信通道是隱形的，那正是當年「退回了卻好像沒用」的原始成因；那顆按鈕後來連同 `rejected` 狀態一起拆了，因為改尺已經把它該做的全做完了。目標另外帶 `last_human_edit_version`，只由人的動作推進：agent 自己攤項目時也會 bump 版本，所以「版本動了」不能當成「人改了東西」用，否則每一輪正常執行都會對人叫（違反原則 4）。
-
-- **終端機活得比 app 久（2026-07-30，已端到端確認）。** goal 綁一個 session id，而那個 id 永不復生 —— 所以 GUI 一關就把 shell 掛斷，等於一份契約的壽命只有一次 app 執行：辛苦長出來的驗證項在下次開啟時對 agent 已經是死的。改由 `witnos pty-serve` 持有那些 shell，也就是 tmux 唯一承重的那個把戲，但不把 tmux 變成依賴（承重路徑維持單一語言、單一 repo，而那支 headless bin 本來就不准依賴 `tauri`）。協議的完整規格住在該模組的檔頭；形狀是**一個 socket、兩種連線**：控制連線走 newline-delimited JSON（open／list／resize／kill／**foreground**），資料連線一個 session 一條、hello 之後就是**不帶任何 framing 的裸位元流** —— agent 印幾 MB 的時候，不該為 base64 或每塊表頭付錢。attach 時先回放有界的 scrollback，再無縫接上即時輸出；那個接縫由結構保證，不是靠時序湊。session id 跨 daemon 重啟單調遞增且永不重用：id 就是 goal 用來指名「我的 agent 住在哪個終端機」的東西，重發一個還活著的 id 等於把修正打給錯的 agent。
-
-  三條必須守住的推論：**unmount＝detach，只有 ✕ 與 restart 才 kill**（React StrictMode 會 mount 兩次，而關掉 app 更不能殺 —— 那是整個功能）；**啟動時先做一次 census**，照原 id 還原存活的 pane，全都沒了才開新的；**「殭屍記帳」的前提因此反轉** —— 只記帳「記過 pane 但沒有任何一個還活著」的 goal，而且**問不出 census 時整個掃描跳過**（「我不知道」不能變成「它結束了」）。層次也守住：core 只收「還活著的清單」，去問 daemon 的是 app。
-
-  **一個 pane 屬於一個專案；關掉目標就開下一個 shell（2026-07-30）。** shell 一旦持久化，pane 就不再只是一個輸入框，而是一個工作區——裡面住著一個 agent、一份逐字紀錄、一個所在目錄。所以在側欄點選專案不再把你正在打字的那個 shell `cd` 過去，而是在該專案開一個 pane、原本那個留在原地；點回來時會找到已經在那個專案裡的 pane（或你 cd 進某個 crate 之後仍在它底下的那個）給焦點，而不是再開第二個——就像在編輯器裡切換專案。`cd` 那條路只留作最後手段：疊到沒有空間再開 pane 時，選擇是「搬一個 shell 過去」或「這次點擊什麼都沒發生」，前者比較誠實（而且它依然拒絕對正在跑東西的 pane 打字）。關掉目標同理，**在它的專案裡開一個新的 shell**：goal 綁一個 session id、id 永不復生，所以下一次下目標本來就需要新的 session，工作區直接把它遞過來，而不是留成一個要記得自己做的步驟；被關掉的那個目標自己的 pane 完全不動——那裡是剛完成的工作的逐字紀錄，而「只有 ✕ 與 restart 會殺掉 shell」這條不破。兩者都要等啟動 census：census 之前 app 分不出「這個專案沒有 shell」與「還不知道有哪些 shell」，會開出一個自己正要還原的 pane 的複本——與上面殭屍記帳同一條規則：「我不知道」不是答案。
-
-  **已知代價**：app 關著的那段時間沒人在看。優雅退出會移除上膛標記（所以不會亂攔），但**強制結束**會留著它，於是撐過來的 agent 會在下一次 Stop 停在那裡等一個不存在的 core —— 持久化讓這個組合從邊角變成常態。自然的終點是把 axum core 也搬進 daemon、GUI 退化成純客戶端，也就是本文件上面自己寫的「本機 daemon + web 介面」那個參考架構；刻意延後，先讓骨架證明這條路可行。Windows 沒有 daemon（ConPTY 既讀不到前景行程群組、也沒有檔案系統 socket），那裡的終端機仍與 app 同生共死。
-
-- **把修正打回 agent 的終端機（2026-07-29）。** 對一個已經收工的 agent，事後裁判若無法回到執行流程就等於沒有發生——所以修正必須能開啟新的一回合。app 本來就擁有 agent 所在的那個終端機，於是走 PTY：每個 shell 都蓋上 `WITNOS_PANE`（與 `WITNOS_TERMINAL` 同一套繼承手法），UserPromptSubmit hook 把它記到 session 綁定上，IPC 命令由 goal → session → pane 找到那個 shell 並寫入一行。**安全守則是「pane 裡有沒有前景程式」**——與輸入 `cd` 的守則正好相反（那個需要有 shell 才能執行指令），把散文打進裸 shell 會被當指令跑掉。至於 agent 是閒置還是正在工作，**不是安全問題**（鍵盤輸入只會落在 Claude Code 的輸入框），只是禮貌：UI 讀 Claude Code 自己publish 的 OSC 標題（`·` 閒置、`✳` 工作中），工作中就不打字——因為送信通道本來就會在它下一次 tool call 帶到。
-
-- **`witnos init`**：裝進**專案層級**的 `.claude/settings.json`（不是使用者全域——見下面的上膛／退膛協議），共四樣：Stop 與 PostToolUse 兩個 command hook（都指向 app 內打包的 `witnos` bin，絕對路徑）、主觀判斷用的 prompt hook，外加一小段**契約書寫規範**的 prompt（每條＝主張＋怎麼驗＋附什麼證據；主觀條必附詮釋；初版契約攤完後，agent 須再做一輪 **blindspot pass**——提出「使用者可能沒想到要驗」的候選項，預設主觀，等人處置：改尺／刪除；**外加「契約要用使用者自己的語言寫」**——這段 prompt 本身是英文，光這樣就足以讓 agent 拿英文的 claim 與證據回答一個繁體中文的目標，而人讀不懂的證據觸發不了任何東西，那正是原則 1 的全部機制。規則綁的是使用者自己的 prompt，不是 app 的 UI 語言：hook 讀不到 webview 的設定，而且使用者正在對 agent 打的字本來就是更好的訊號）——hook 只能逼 agent 停下，好契約要靠 prompt 端寫出來。**App 的「監看專案（自動）」會代跑 `witnos init`**（shell out 到 bundle 內的 bin，實作只有一份；bin 內的 `current_exe()` 就是正確的 hook 絕對路徑），再把目錄記進 registry 並上膛；「資料夾要先受 Claude Code 信任」的前提以 UI 提示浮出。
-
-- **契約 schema 與 Agent 寫入路徑（2026-07-26 定，細節在本地工作文件 `docs/schema-v1.md`，未隨公開樹散布）：** Goal／Item／Evidence／Event 的欄位、放行條件的形式化、origin 儀表（強版假設讀數）都定在該檔。Agent 對 store 的讀寫走**同一支 headless bin 的子命令**（用 Bash 呼叫）——能跑 shell 指令是所有 coding agent 的最大公約數，endpoint／token 封裝在 bin 內、prompt 端不碰憑證。bin 命名同時收斂：**單一 headless bin 名為 `witnos`**（上文 `witnos-gate` 的角色成為它的 `hook` 子命令家族；不依賴 `tauri` crate 的約束不變）。
-
-- **發佈：** 單一簽章 `.app`／`.exe`，跑在作業系統 webview 上（十幾二十 MB 的量級，不是 Electron 的重量）。自用 dogfood 階段直接跑**未簽章／ad-hoc 簽章**——macOS 公證與 Windows 簽章延後到要裝到別人機器時再說，不擋 v1 驗證。
-
-- **fail-closed 只在「上膛」時生效（上膛／退膛協議）：** 「連不上一律 block」若無條件成立，哪天沒開 app、在無關的專案跑 Claude Code，每個 session 都會卡死在 Stop。所以：被監看的專案帶一個**上膛標記檔（armed marker）**，優雅停止時移除；gate 只在「有標記且連不上」時 block。App 崩潰會留下標記 → 正確卡住；沒在用 Witnos 的專案 → 永不誤傷。刻意卡住仍是已知的 UX 代價，必須讓人看得見：app 要有「正在盯 N 個目標」指示，且 **block 的 reason 字串本身就是逃生門文件**（「Witnos unreachable——開啟 app，或執行 `witnos disarm`」）——使用者卡住的當下，眼睛正好就在 transcript 上。
-  - **marker v2（2026-07-29，auto 模式）：** `{v: 2, auto, default_goal?, sessions: {session_id → {goal_id, contract_version, agent_synced_version}}}`——整檔是「(registry 有沒有這個目錄, store 裡該目錄的 goals)」的**純推導**（只有 watching 的 goal 進得來；session 自己的 auto goal 佔自己的槽；最新的 watching 手動 goal 當 `default_goal`），tmp+rename 原子寫入；舊版單 goal 形狀仍可讀。**一個 session 一個目標、各自被自己的契約 gate**——「證明 agent 看過我那條修改」的信任基礎不允許 A session 被 B 的契約攔。auto 專案裡未綁定的 session 停下來時，gate 帶 `(project_dir, session_id)` 問 core：goal 在且 watching → 正常判定；人明確 opt-out → 放行（fail-closed 防的是靜默失效，不是人的決定，原則 5）；真的沒 goal → block（等於「core 從頭到尾都不在」的靜默失效窗口，正是 fail-closed 要堵的）。**範圍收窄（2026-07-29）：有目標才會被攔。** 有 marker 條目的 session 不管在哪裡啟動都照原樣判定；沒有目標的 session 只有在帶著 `WITNOS_TERMINAL` 記號時才會被卡住——否則一律放行，連 core 不在或 marker 撕裂也放行，因為卡住一個沒有契約的 session 保護不了任何東西，卻會卡在使用者真正在工作的那個終端機裡。**auto 專案零 goal 也保留 marker、照樣卡自己終端機裡的 session**。auto 模式的 registry 在 `~/.witnos/projects.json`，人專屬面（IPC，不上 HTTP）；`witnos disarm` 移除 marker 但 registry 還在、app 重啟會重新上膛（訊息會明說：要停用去 app 移除專案）。
-  - **agent 子命令全部吃 `--goal <id>`**（同專案多個 active goal 時必帶）：Bash 呼叫不帶 session 身份，goal 身份因此走 in-context——協議注入、每個 delta、每個 block reason 都印著它；不帶旗標時只在 marker 能解析出唯一 goal 時才通。
-
-- **何時重新考慮：** 出現第一個真正「TS 形狀」的需求（roadmap 第 4 步——接 Codex 且想**原封不動**搬 open-design 的 adapter；或第 5 步要做原始軌跡的篩選呈現）才值得抽一個**由 Rust 核心監督的 TS sidecar** 出來。v1 不為此預付成本。
-
-- **實作備忘：**
-  - 「目標」與 Claude Code session 的綁定：用 UserPromptSubmit hook 建立／續接 goal（hook 拿得到 `session_id` 與 `prompt`——後者 2026-07-29 同版實測補證，原始樣本見 spike 報告）。auto 模式下這支 hook get-or-create 該 session 的目標（標題＝首個 prompt 壓空白截 80 字；失敗**不記** instructed → 下個 prompt 重試，短暫斷線自癒；人 opt-out 過的目標原樣回傳、永不重新 watch）。`/clear`／resume 產生新 session id → 新目標，是所選語意不是 bug。
-  - **SessionEnd hook（第四個裝進 settings 的 hook；2.1.220 實測存在，輸入含 `session_id`／`cwd`／`reason`）**：session 結束時自己名下的 goal 仍在 `running` → 入帳 `turn_ended_unmet`，側欄不再出現「沒有 agent 會回來完成」的殭屍 running 目標。純記帳、fail open；只認 marker `sessions` 的精確條目（共用的 default goal 不因單一 session 結束被翻）；同 session 續跑再觸發守門 → 自動復活成 `running`。
-  - Stop hook 輸入的 `stop_hook_active` 旗標要處理，把「fail-closed 的刻意 stall」與「無限 block 迴圈」在語意上分開。
-  - 長任務會經歷 context 壓縮：reconcile 時讓 agent 重讀 store 裡自己上次的詮釋，避免壓縮後重新發明一套理解。
-  - 已對過官方 hooks 文件，並以 Claude Code 2.1.220 實測（2026-07-26；方法、原始記錄與可重跑的 harness 在本地工作文件 `spike/hooks-2026-07-26/`，未隨公開樹散布）：
-    - **送信兩條通道實測都通**：PostToolUse 現已支援 `hookSpecificOutput.additionalContext`（與 2026-07-03 的舊記載相反；注入位置在 tool result 旁），**exit code 2＋stderr** 也有效（「Shows stderr to Claude」；工具已跑完，不會擋到任何東西）。送信用 additionalContext，stderr 留作 fallback。matcher 用 `"*"`；command hook 預設逾時 600 秒，可用 `timeout` 欄位覆寫。（舊記載的 `continueOnBlock` 已不在文件中，不要依賴。）
-    - **Stop 的 `{"decision":"block","reason":…}` 實測有效**，且 reason 字串能實際引導 agent 的下一步。輸入中的 `stop_hook_active` 文件已不載但實際仍在（首擋 false、其後 true）；輸入另有 `last_assistant_message`、`transcript_path`；UserPromptSubmit 輸入也有 `session_id`——目標↔session 綁定可行。
-    - **Stop 連續 block 上限實測＝8**：第 9 次連續 block 的 reason 會進 transcript，但回合就此結束（headless 下 stdout 為空、無警告）。上膛卡住因此不是無限的——目標要以「回合已結束、未達放行條件」入帳，不能假設 block 能永遠拖住 agent。
-    - **fail open 實測證實**：Stop 與 PostToolUse hook 崩潰（exit 1）都被無聲放行；hook 執行器對「非 0 非 2 退出、逾時、hook 自身崩潰」一律繼續——所以 fail closed 必須由 `witnos-gate` 自己保證：內部逾時遠短於 hook 逾時，panic handler 裡也要輸出 block JSON。
-    - http hook 的 fail open 有文件背書：「HTTP hooks can't signal a blocking error through status codes alone」——只有成功的 2xx＋正確 JSON 才能 block；連不上、逾時、非 2xx 都等於放行。
-    - **信任前提**：未受信任的資料夾會忽略專案 settings 的 `permissions.allow`（2.1.220 headless 實測該情況下 hooks 仍會執行，但別依賴）——`witnos init` 的流程要把「資料夾必須先受信任」算進去。
-  - hook API 仍在快速演化（事件已達 30 種，另有 PostToolUseFailure／StopFailure 等新事件可留意）；prompt／agent 型 hook 這輪未測，v1 動工前用同一套 harness 補測、重驗上述欄位。
+So the agent's **new interpretation of a subjective criterion** must be surfaced, not filed away with the passes. This is the same mechanism as principle 4: a reinterpretation is exactly the kind of thing that should rise to the top.
 
 ---
 
-## 核心假設（最重要的一節）
+## The core bet
 
-整個專案的地基是這一條假設：
+Everything rests on one claim:
 
-> **給人看「證據」，會比給人看「文字清單」，更能讓人抓到自己沒講出口的期待。**
+> **Showing a human "evidence" lets them catch their own unspoken expectations better than showing them a "text checklist".**
 
-如果這條是假的，本工具就只是個比較好看的 checklist。
+If that is false, this tool is a prettier checklist.
 
-**決定：直接做。** 作為目標使用者本人（軟體工程師），判斷這條夠可信，因此選擇用「做一個最小版本、自己實際用」來驗證，而不是先跑一輪正式對照測試。對一個 local-first、單人開源的工具，「做出來、看自己會不會一直用它」本身就是便宜又誠實的驗證。
+**Decision: build it.** As a member of the target audience, the author judged the claim credible enough to validate by building a minimal version and using it, rather than running a formal study first. For a local-first, single-user, open-source tool, "build it and see whether you keep reaching for it" is cheap and honest validation.
 
-**但要清楚自己押的是哪個版本的假設：**
+**But be clear which version of the claim is being bet on:**
 
-- **弱版（幾乎一定成立）：** 給人看更多證據，有幫助。
-- **強版（產品真正押的）：** 證據能讓人**被觸發、想起自己當初沒講出口的期待**——也就是「抓缺漏」，而不只是確認已知。
+- **Weak version** (near-certain): more evidence helps.
+- **Strong version** (what the product actually bets on): evidence **triggers people into remembering expectations they never articulated** — catching gaps, not just confirming knowns.
 
-弱版成立不代表強版成立。而且身為目標使用者本人，反而不容易從內部檢查強版——因為自己的認知會自動填補缺漏。所以做最小版本、實際使用時，要盯著看的正是強版：有沒有真的**因為看到證據而抓到事先沒寫進清單的東西**，而不只是覺得「資訊很齊全」。
+The weak version holding says nothing about the strong one. And being the target user makes the strong version *harder* to check from the inside, because your own mind fills the gaps automatically. So dogfooding watches for exactly this: did something get caught **because evidence was seen**, that was never written in the list — as opposed to merely feeling well-informed.
 
-**所以 dogfood 要帶儀表，不靠感覺。** 每次新增／修改一條驗證，store 順手記下它的出身：(a) 開跑前寫的、(b) 看著某條證據時加的（記下是哪一條證據）、(c) 執行中自發想到的。(b) 的計數就是強版假設的直接讀數；萬一要退回下面的對照實驗，兩邊還能用同一套度量。成本近乎零——編輯事件本來就進 store。
+**Which is why dogfooding is instrumented, not vibes-based.** Every contract add or edit records its provenance: (a) written before the run, (b) added while looking at a specific piece of evidence (recording which one), (c) spontaneous mid-run. The count of (b) is the direct readout of the strong version. It costs nothing — edit events land in the store anyway.
 
-**便宜的回頭驗證法（萬一做出來發現沒共鳴）：** Wizard-of-Oz——挑一個真實任務用現成 agent 跑一遍、手動整理出它的證據、找幾名工程師分兩組（一組只看文字清單、一組看證據），比對後者是否更容易抓到沒人事先寫進清單的缺漏。Token 成本可忽略：唯一花 token 的是「跑一次 agent」那一步，其餘全是人工。
-
----
-
-## 目標使用者
-
-「認知已經足夠、但平常被擋在 agent 黑盒外面」的人——典型是軟體工程師。
-
-**本工具不負責讓使用者變聰明，它負責讓既有的判斷力有地方施展。** 它放大使用者本來就有的認知，不替使用者生出他沒有的認知。對一個認知裡沒有「Apple 只用黑白灰」的人，工具攤再多證據也沒用，因為他不知道自己在看什麼——這種人不是它的使用者。工具的價值上限，就是使用者本人的認知上限。
-
-**領域中立。** 被驗的是美感、是主觀品味、還是技術判斷（抽象對不對、邊界情況、codebase 慣例、安全性），對工具來說是同一個動作——逼 Agent 攤出證據、讓那個領域的權威者去戳。工具本身**什麼領域知識都不懂，它只懂流程**；正因為它不懂內容，所以任何領域都能用。「該攤什麼證據」由 Agent 負責產生（見〈技術路線〉的證據範圍），工具不內建任何領域的證據擷取器。
+**Cheap fallback if the built version doesn't resonate:** Wizard-of-Oz. Run a real task with an off-the-shelf agent, assemble its evidence by hand, split a few engineers into two groups — one sees a text-only list, one sees evidence — and compare whether the latter catches more gaps nobody wrote down in advance.
 
 ---
 
-## 範圍與非目標（目前）
+## Who it's for
 
-- **本地優先、單人使用、開源。** 不做雲端、不蒐集跨使用者資料。
-- **不追求護城河。** 開源專案不靠不可複製性活；設計乾淨到能被輕易理解與 fork，是優點。
-- **不取代 agent harness。** 只做「驗證透明化與協作」這一層。
+Someone whose judgement is already adequate but who is locked outside the agent's black box. Typically a software engineer.
 
-### 可能的未來方向（明確排除於當前範圍）
-「從跨使用者的去識別化資料學會『這類任務大家通常漏掉什麼』、主動幫使用者補上沒想到的驗證項」——這是個強大的方向，但它與 local-first / 資料不外流的定位直接衝突，且需要使用者同意交出資料。**目前刻意不做**，僅記錄於此。
+**The tool does not make you smarter; it gives judgement you already have somewhere to act.** It amplifies existing cognition, it does not manufacture cognition you lack. Surfacing evidence to someone who has never internalised "Apple only uses black, white and grey" does nothing — they don't know what they're looking at. The value ceiling is the user's own.
 
----
-
-## 粗略 Roadmap
-
-1. **做最小可行原型——這就是驗證手段。** 於 Claude Code hooks 上：Stop（守門）＋PostToolUse（送信）這對 hook + 讀取「活契約」的驗證核心 + 一個可在執行中編輯的最簡介面。先做（一），含協作編輯，採事後裁判。自己實際使用時帶著儀表（見〈核心假設〉），盯著看強版假設成立與否。
-2. 把「Agent 交出的證據」呈現好（Agent 負責產生證據——例如它自己附的截圖、它偵測到的色票、它量的數字；工具只負責呈現與標記，不內建任何領域的擷取器）。
-3. 加入分流機制（用什麼維度判斷「需要人判斷」，看真實資料再定）與逐目標的監控（可自由加入／退出）；並實作原則 6 的「主動標記 Agent 對主觀項的新理解」。
-4. 把驗證清單格式抽成 agent-agnostic schema，嘗試接第二個基座。
-5.（條件性）若（一）被驗證為不足且看得出不足在哪，才設計原始軌跡層（二）的篩選規則。
+**Domain-neutral by construction.** Aesthetics, taste, and technical judgement (correctness, edge cases, codebase conventions, security) are all the same action as far as the tool is concerned: make the agent surface evidence, let the domain authority poke at it. The tool understands *process*, not *content* — and precisely because it knows nothing about your domain, any domain can use it. What evidence to surface is produced by the agent; no domain-specific extractor is built in.
 
 ---
 
-## 相關概念與先行者
+## Scope and non-goals
 
-- **Loop engineering** — 本專案問題意識的來源脈絡。
-- **Claude Code hooks**（尤其 Stop / http / agent hook）— 預定的綁定機制。
-- **Open Design**（nexu-io/open-design）— BYOK、自帶 agent 的整合模型參考（〈技術路線〉的 daemon + adapter 做法借鑒於此）。
-- **open-codesign**（OpenCoworkAI）— 其「live agent 面板：todos + tool calls + 可中斷生成」是「在使用者眼皮底下執行」這個體驗最接近的現成實作，值得拆解參考。
-- **「A Field Guide to Fable: Finding Your Unknowns」**（Thariq Shihipar，Anthropic，2026-07，x.com/trq212/article/2073100352921215386）— 從 prompt 端獨立寫出同一個問題模型：品質瓶頸在釐清自己的 unknowns，其中 **unknown knowns**（知道但沒說出口、只有在結果面前才顯形）正是本專案核心假設要收割的東西——證據就是它的顯影劑。他的五個手動技巧（blindspot pass、brainstorming、interviews、references、implementation plan）集中在事前／事後；Witnos 等於把這套手動紀律機制化成掛在執行迴圈上的層。其 post-implementation 的「quiz／報告」（確保人真的理解了才 merge）對原則 6「裁判不淪為橡皮圖章」是可參考的遠期想法。
+- **Local-first, single-user, open source.** No cloud, no cross-user data collection.
+- **No moat sought.** Being clean enough to understand and fork easily is a feature.
+- **Not a replacement for your agent harness.** Only the verification-transparency and collaboration layer.
+
+**Explicitly out of scope, recorded only:** learning "what people usually miss for this kind of task" from de-identified cross-user data. Powerful, and in direct conflict with the local-first, nothing-leaves-your-machine positioning.
 
 ---
 
-## 授權
+## Roadmap
+
+1. **Build the minimal viable prototype — that is itself the validation method.** On Claude Code hooks: the Stop (gate) + PostToolUse (delivery) pair, a verification core reading the living contract, and a minimal UI to edit it during execution. Agent-curated evidence with collaborative editing and after-the-fact judgement. Dogfood it instrumented, watching the strong version of the bet.
+2. Present the evidence the agent surfaces well. The agent produces it; the tool displays and flags, and embeds no domain extractor of its own.
+3. Add triage, plus per-goal opt-in monitoring, and implement principle 6's active flagging of reinterpretations.
+4. Abstract the contract format into an agent-agnostic schema; try a second base agent.
+5. *(Conditional)* Only if agent-curated evidence proves insufficient **and you can see where** — design the filtering rules for a raw-trace layer.
+
+---
+
+## Prior art and related ideas
+
+- **Loop engineering** — the reason → act → observe → repeat framing this project's problem statement builds on.
+- **Claude Code hooks** (Stop / http / agent) — the binding mechanism.
+- **[open-design](https://github.com/nexu-io/open-design)** — reference for the BYOK integration model: local daemon, UI, per-agent adapters scanning PATH.
+- **open-codesign** (OpenCoworkAI) — its live agent panel (todos, tool calls, interruptible generation) is the closest existing implementation of "executing under the user's eyes".
+- **"A Field Guide to Fable: Finding Your Unknowns"** (Thariq Shihipar, Anthropic, 2026-07) — independently states the same problem model from the prompt side. Quality bottlenecks on clarifying your own unknowns, and **unknown knowns** — things you know but never articulated, visible only in front of results — are exactly what the core bet harvests. Evidence is their developing agent.
+
+For the full technical decision log — the state machine, the arm/disarm protocol, the terminal daemon's design, and every dated decision behind them — see the [Traditional Chinese README](README.zh-Hant.md), which is the canonical design document.
+
+---
+
+## Repository layout
+
+| Path | What it is |
+|---|---|
+| `crates/witnos-core` | Domain types, write-time rules, the per-goal JSON store, the gate's release condition. No I/O framework dependency |
+| `crates/witnos-server` | The axum core **as a lib** — the Tauri shell embeds it, so what the human edits is the same in-process store the gate reads. `examples/serve.rs` runs it headless |
+| `crates/witnos-cli` | The headless `witnos` bin: both hooks (Stop gate fail-closed / PostToolUse delivery fail-open), arm/disarm, the agent-facing subcommands, and the `pty-serve` terminal daemon. **Must never depend on the `tauri` crate** |
+| `crates/witnos-app` | The Tauri shell. The human side goes over IPC, the agent side over HTTP — that split is a structural trust boundary |
+| `ui/` | The webview frontend (React + TypeScript, no UI framework, icons are inlined Lucide paths) |
+| `scripts/install-app.sh` | One-shot bundle and install to `/Applications/Witnos.app` |
+
+Development commands are in `CLAUDE.md`.
+
+---
+
+## Contributing
+
+Still at the dogfooding stage; issues and PRs are welcome, but read the [design principles](#design-principles-this-is-the-project-not-the-ui) first. Those six are hard constraints and every implementation decision gets checked against them — especially principle 2 (the agent may never pass its own subjective work) and the fail-closed gate. Those two are why the tool exists and won't be relaxed for convenience.
+
+Think the direction is right but the details should work differently? This project deliberately seeks no moat — **being clean enough to understand and fork easily is one of its features.** Forking it outright is a perfectly good outcome.
+
+---
+
+## License
 
 Copyright © 2026 CHENG YEH TSAI
 
-**MIT OR Apache-2.0 雙授權**（2026-08-02 定案）——你選一個用就好，兩份全文在 `LICENSE-MIT` 與 `LICENSE-APACHE`。（`LICENSE-APACHE` 是 Apache 官方原文，未經修改；它結尾的附錄是「如何把授權加到你的作品上」的模板，不是本專案的宣告，著作權人以此處與 `LICENSE-MIT` 為準。）
+**Dual licensed under MIT OR Apache-2.0** — take whichever you prefer. Full texts in [`LICENSE-MIT`](LICENSE-MIT) and [`LICENSE-APACHE`](LICENSE-APACHE). (`LICENSE-APACHE` is the unmodified official text; the appendix at its end is a template for applying the licence to your own work, not a declaration by this project — the copyright holder is the line above and `LICENSE-MIT`.)
 
-這是 Rust 生態的預設（rust-lang 自己與絕大多數 crate 都如此），也正好對上本專案的定位：「乾淨到容易看懂、容易 fork」是自陳的功能之一，那就把選擇權交給下游——要專利授權與報復條款的保障就走 Apache-2.0，要塞進 GPLv2 專案就走 MIT。原始碼檔案不加 license 標頭：四個 crate 的 `Cargo.toml` 已宣告 `license = "MIT OR Apache-2.0"`，每個檔案再蓋一次只是噪音。
+This is the Rust ecosystem's default, and it fits: "clean enough to fork" is a stated feature here, so the choice goes to whoever forks it — Apache-2.0 for its patent grant and retaliation clause, MIT for GPLv2 compatibility. Source files carry no licence headers; all four crates declare `license = "MIT OR Apache-2.0"` in their manifests, and repeating it atop every file is noise.
 
-除非你另行聲明，否則你有意提交進本專案的貢獻，一律以同樣的雙授權釋出（Apache-2.0 第 5 條的標準表述）。
+Unless you state otherwise, any contribution you intentionally submit for inclusion shall be dual licensed as above, with no additional terms.
