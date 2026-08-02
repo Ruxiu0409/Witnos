@@ -9,9 +9,12 @@ crates/witnos-app/binaries/
 # (absolute machine-specific paths — never commit).
 .witnos/
 .claude/
-# Local working documents (2026-08-03). They stay on disk and CLAUDE.md still
-# points at them, because that file is read HERE where they exist; they are
-# just not part of the published tree from this commit on. Earlier commits
-# still contain them — deliberately, the history was not rewritten.
-docs/
+# Local working documents stay private by default. The public design notes are
+# explicit exceptions so the product READMEs can stay short without throwing
+# away the reasoning behind the project.
+docs/*
+!docs/README.md
+!docs/design.md
+!docs/design.zh-Hant.md
+!docs/design.ja.md
 spike/

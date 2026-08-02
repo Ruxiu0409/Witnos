@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-**v1 implementation in progress (started 2026-07-26).** The repository contains the design docs — **`README.zh-Hant.md` is the canonical design document; keep it in Traditional Chinese when editing** — and this file, plus a Cargo workspace. Three READMEs ship (2026-08-03): `README.md` (English) is what GitHub shows a visitor, `README.zh-Hant.md` is the canonical one, `README.ja.md` is Japanese. **A decision recorded in one must be back-ported to all three plus this file** — the English and Japanese versions deliberately condense the technical decision log and point at the Chinese for it, so a new *dated design decision* belongs in the Chinese in full and in the others only where it changes what a reader does. Two working documents live on disk but are **not in the published tree** (gitignored since 2026-08-03; earlier commits still contain them — the history was deliberately not rewritten): `docs/schema-v1.md` (the contract schema + write-path design) and `spike/` (pre-implementation verification harnesses; the 2026-07-26 Claude Code hooks spike). Cite them freely — this file is read here, where they exist.
+**v1 implementation in progress (started 2026-07-26).** Three short product READMEs ship in parity: `README.md` (English, GitHub's front door), `README.zh-Hant.md`, and `README.ja.md`. The long-form rationale lives under `docs/design*.md`; **`docs/design.zh-Hant.md` is the canonical design document and stays in Traditional Chinese**. A product-facing change belongs in all three READMEs. A new dated design decision belongs in the canonical Chinese design notes and this file, with the English/Japanese design notes condensed where useful. Two local working sources remain outside the published tree: `docs/schema-v1.md` (ignored while the four public docs files are explicit exceptions) and `spike/` (pre-implementation verification harnesses). Cite them freely here, where they exist.
 
 The crates:
 
@@ -14,7 +14,7 @@ The crates:
 
 Missing still: the subjective-judgement prompt hook. (`witnos init`, the UserPromptSubmit binding/protocol hook, and `witnos goal new` landed 2026-07-26; the contract-authoring prompt is injected by the UserPromptSubmit hook once per session rather than written into any file. **Auto mode landed 2026-07-29**: the app can watch a project directory (folder picker → hooks installed via the bundled CLI → registered in `~/.witnos/projects.json`); every agent session **started from the app's own embedded terminal** then gets its own goal from its first prompt (`POST /goals/auto`, title = the prompt, idempotent per session) — sessions started in any other terminal are out of scope: no goal, no protocol injection, never stalled (scope stamp `WITNOS_TERMINAL`, set on every shell the app spawns and inherited by the agent and by its hooks) — and the armed marker is v2 — session-keyed, derived per-directory, so each session is gated against ITS OWN contract. The `witnos` bin ships inside `Witnos.app/Contents/Resources/bin/`; hooks and the protocol text use absolute paths, no PATH setup needed. **The terminal daemon landed 2026-07-30**: the app's shells live in `witnos pty-serve`, so an agent session — its conversation included — survives quitting and reopening the app; confirmed end-to-end by hand, since no test can.)
 
-This file is the English operating distillation of the README for Claude Code. The two are in sync (last verified 2026-08-02; the "Stack decision (v1)" section lives in the README as 「v1 技術選型（已定）」). When a decision is added or changed in one, back-port it to the other.
+This file is the English operating distillation of the canonical design notes for Claude Code. When a decision changes, update this file and `docs/design.zh-Hant.md`; if it changes what users install, do, or can expect, update all three product READMEs too.
 
 Build/lint/test commands: see "Development commands" below. The design constraints below remain the substance of the project — check every implementation decision against them.
 
@@ -147,7 +147,7 @@ Validation method chosen: build a minimal version and dogfood it — **instrumen
 4. Abstract the verification-list format into an agent-agnostic schema; try a second base agent.
 5. (Conditional) Only if agent-curated evidence proves insufficient *and you can see where* — design the filtering rules for the raw-trace layer.
 
-## Related references (from the README)
+## Related references (from the design notes)
 
 - **Loop engineering** — the "reason → act → observe → repeat" framing the project's problem statement builds on; the verification/observe step is what Witnos targets.
 - **Claude Code hooks** (Stop / http / agent) — the planned binding mechanism (see Technical direction).
