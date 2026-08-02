@@ -10,3 +10,8 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+# The Rust ecosystem's default, and the right one here: "clean enough to fork"
+# is a stated feature, so downstream picks — Apache-2.0 for its patent grant,
+# MIT for GPLv2 compatibility. See LICENSE-APACHE and LICENSE-MIT.
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Ruxiu0409/Witnos"

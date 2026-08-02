@@ -2,6 +2,7 @@
 name = "witnos-server"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 # The core's HTTP surface as a library: the future Tauri shell embeds it
 # (tokio::spawn on startup); `examples/serve.rs` runs it headless for

@@ -2,6 +2,7 @@
 name = "witnos-cli"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 # The headless bin. Must never depend on the `tauri` crate (links no webview
 # runtime: small, ms-start, headless/CI-safe).

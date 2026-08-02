@@ -2,6 +2,7 @@
 name = "witnos-app"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 # The GUI core: Tauri shell embedding the axum server (witnos-server) so the
 # webview UI and the gate hit the same in-process store.

@@ -4,7 +4,38 @@
 
 讓 AI coding agent 的「驗證」這一步從黑盒變透明、且能由人**即時協作編輯**的工具。
 
-**狀態：v1 實作進行中（2026-07-26 動工）。** 本檔記錄設計脈絡與待驗證假設。已落地：hooks 行為 spike（`spike/hooks-2026-07-26/`）、契約 schema（`docs/schema-v1.md`）、Rust workspace——`witnos-core`（型別／store／放行條件）、`witnos-server`（axum 核心，lib 形式、GUI 外殼內嵌）、headless bin `witnos`（雙 hook＋agent 子命令＋`pty-serve` 終端機 daemon）、Tauri 外殼與前端。未動工：主觀判斷 prompt hook。（`witnos init`、UserPromptSubmit 綁定＋協議注入 hook、`witnos goal new` 已落地；契約書寫規範由 UserPromptSubmit hook 每 session 注入一次，不寫進任何檔案。**2026-07-29 落地 auto 模式**：在 app 選一個專案目錄開「自動監看」後，**在 app 內建終端機裡啟動的** agent session，第一個 prompt 自動建立該 session 專屬的目標並上膛；在其他終端機裡啟動的 session 不在範圍內——不建目標、不注入協議、也不會被攔停（範圍記號 `WITNOS_TERMINAL`，app 開的每個 shell 都蓋上，agent 與它跑的 hook 都繼承得到）。marker 升級為 session-keyed 的 v2、`witnos` bin 隨 app 打包、hooks 與協議全用絕對路徑，使用者不必碰 PATH。）開發指令見 `CLAUDE.md`。
+**狀態：v1 實作進行中（2026-07-26 動工）。** 本檔記錄設計脈絡與待驗證假設。已落地：hooks 行為 spike、契約 schema（兩者的完整記錄留在本地工作文件 `spike/`、`docs/`，未隨公開樹散布）、Rust workspace——`witnos-core`（型別／store／放行條件）、`witnos-server`（axum 核心，lib 形式、GUI 外殼內嵌）、headless bin `witnos`（雙 hook＋agent 子命令＋`pty-serve` 終端機 daemon）、Tauri 外殼與前端。未動工：主觀判斷 prompt hook。（`witnos init`、UserPromptSubmit 綁定＋協議注入 hook、`witnos goal new` 已落地；契約書寫規範由 UserPromptSubmit hook 每 session 注入一次，不寫進任何檔案。**2026-07-29 落地 auto 模式**：在 app 選一個專案目錄開「自動監看」後，**在 app 內建終端機裡啟動的** agent session，第一個 prompt 自動建立該 session 專屬的目標並上膛；在其他終端機裡啟動的 session 不在範圍內——不建目標、不注入協議、也不會被攔停（範圍記號 `WITNOS_TERMINAL`，app 開的每個 shell 都蓋上，agent 與它跑的 hook 都繼承得到）。marker 升級為 session-keyed 的 v2、`witnos` bin 隨 app 打包、hooks 與協議全用絕對路徑，使用者不必碰 PATH。）開發指令見 `CLAUDE.md`。
+
+---
+
+## 安裝與執行
+
+**先讀這段：目前只有 macOS 能用，而且是自用階段的東西。** 沒有預先編好的下載檔，你得自己 build。
+
+需要 [Rust](https://rustup.rs)（工具鏈由 rustup 管，`~/.cargo/bin` 要在 PATH 上）與 Node 20+。
+
+```sh
+git clone <this-repo> && cd Witnos
+cd ui && npm install && npm run build && cd ..   # frontendDist 必須先存在
+cargo build -p witnos-cli                        # 終端機跑在這支 bin 的 daemon 裡，先 build
+cargo run -p witnos-app
+```
+
+正式安裝成 `/Applications/Witnos.app`：`scripts/install-app.sh`（會自己 build 前端與 CLI、換掉舊版、再開起來）。
+
+跑起來之後：在 app 裡按「監看專案（自動）」選一個專案資料夾——它會把 hooks 裝進那個專案的 `.claude/settings.json`。**接著要在 Claude Code 裡信任該資料夾**（新 hooks 可能需要 `/hooks` 核准）。然後**在 app 內建的終端機裡**啟動 Claude Code，你打的第一個 prompt 會自動變成一個目標，那個 session 的驗證契約就開始運作了。在其他終端機開的 session 不在範圍內——不建目標、也不會被攔停。
+
+不用 Witnos 時要退場：在 app 裡對該專案按「停止監看」。若 app 崩潰導致 agent 卡在 Stop 閘門，`witnos disarm` 可以就地解開（訊息會告訴你 app 重啟時會重新上膛）。
+
+### 目前的限制（都是刻意的，不是待修 bug）
+
+- **只有 macOS。** Windows 沒有終端機 daemon（ConPTY 給不出可讀的 foreground process group，也沒有檔案系統 socket），所以那邊的終端機會隨 app 一起死；`scripts/install-app.sh` 也是 POSIX-only。Linux 未實測。
+- **未簽章、未公證。** 自己 build 自己跑，沒有要發佈給別的機器的打算。
+- **只支援 Claude Code。** 抽成 agent-agnostic 格式是 roadmap 第 4 步。
+- **app 關著的時候沒人在看。** 正常退出會退膛（不會留下卡住的 agent），但**崩潰**會留著上膛標記，那個還活著的 agent 會在下一次 Stop 卡住——見〈v1 技術選型〉的上膛／退膛協議。
+- **主觀判斷的 prompt hook 還沒做。**
+
+開發指令（測試、lint、各種 build 迴圈）見 `CLAUDE.md`。
 
 ---
 
@@ -66,6 +97,10 @@
 - **主觀項目**：代理指標只負責「把證據端到人面前」，**agent 永遠不得自己宣告它通過**。
 
 **2026-07-29 修正這條線的表達方式**：原本寫的是「通過與否一定要人點頭」，也真的做了一顆「核可」按鈕——後來拆掉了。因為它對 agent 零作用（放行條件本來就把「已攤出證據」與「已核可」當同一級），而人的誠實預設是「agent 做的先當成對的」。所以主觀項不再有「通過」狀態：終態就是「證據攤在那裡，人改過或沒改」。**Goodhart 這條線一步都沒退**——被禁止的是 agent 自己過關；人的槓桿改成三個動作：改尺、退回、豁免（這條不必檢查），每一個都會推進契約版本並真的傳到 agent 那邊。同意就是沉默，只有不同意才需要動作。
+
+**2026-08-02 又收掉一顆：退回。** 三個槓桿變兩個——改尺與刪除（同日豁免也換成刪除，見下）。「退回」的意思是「這條尺我留著，但你這份證據不算過」，可是改尺本來就會把項目打回未驗證、推進版本、讓證據變過期、當場經由送信通道傳到還在跑的 agent 手上——退回能做的它一件不少，連「一個字都不改、只是不接受這份證據」都可以用原句重存表達。而且多數時候，真正該動的正是那條尺：如果 agent 誤讀了它，把它寫清楚比對它說「重做」有用得多。兩顆按鈕留著，差別只剩 agent 聽到的語氣，不值得在 domain 裡多養一個狀態、多一條 HTTP 路徑、多一格 UI。原則 6 那個「先開過證據原物才動手」的防橡皮章訊號沒有跟著消失：它從退回搬到了編輯上。
+
+**同日，「豁免」也換成直接刪除。** 原本豁免是把項目留在契約裡、標成「沒人檢查」；但不想檢查的條件就不該留著佔位——契約堆滿墓碑，正是原則 4 要砍掉的閱讀量。所以 ✕ 現在是刪除：項目連同它的證據一起離開契約（沒人持有的條件，它的證據是死重），按一下先問、再按一下才真的刪，因為救不回來。舊存檔裡的 waived 項仍然被守門略過——把它讀成「未驗證」等於偷偷把主人早就放棄的檢查重新武裝起來。刪除比豁免多一個要補的坑：**被刪掉的項目不可能出現在「有哪些項目變了」的 delta 裡**（那一列不存在了），所以送信通道另外算一份「被移除了什麼」，用 claim 原文告訴還在跑的 agent 別做了——否則它會一路為一條沒人持有的尺產證據，直到撞上「找不到這個項目」才知道。
 
 一旦為了「更自動」而讓主觀項目也能靠代理指標自動通過，就會掉進 Goodhart 陷阱——agent 去滿足那些數字，做出一個「每項指標都對、但整體就是很怪」的東西。這條線必須守死。
 
@@ -136,7 +171,7 @@
 
 **（二）的觸發條件：**（一）被驗證為不足、**且能看出不足在哪**。那個「不足在哪」會直接告訴你（二）該用什麼規則去篩，而不是現在憑空設計一個篩選器。
 
-**（一）要自帶「發現自己不足」的感測器。** agent-curated 的證據若不帶出處，「（一）不足」這件事永遠不可觀測，上面的觸發條件形同虛設。所以每條證據必附**出處指標**（檔案路徑、跑過的指令、URL），UI 一鍵打開原物比對；並記錄「人點開原物之後，退回了某條或加了新條目」的事件——這份 log 累積起來，就是（二）該用什麼規則篩的需求規格，也是原則 4 分流維度的原始資料。證據另蓋**擷取當下的 workspace 指紋**（commit／dirty hash），代碼之後又動過就標「證據已過期」，免得人對著過時的截圖放行。
+**（一）要自帶「發現自己不足」的感測器。** agent-curated 的證據若不帶出處，「（一）不足」這件事永遠不可觀測，上面的觸發條件形同虛設。所以每條證據必附**出處指標**（檔案路徑、跑過的指令、URL），UI 一鍵打開原物比對；並記錄「人點開原物之後，改了某條尺或加了新條目」的事件——這份 log 累積起來，就是（二）該用什麼規則篩的需求規格，也是原則 4 分流維度的原始資料。證據另蓋**擷取當下的 workspace 指紋**（commit／dirty hash），代碼之後又動過就標「證據已過期」，免得人對著過時的截圖放行。
 
 ### v1 技術選型（已定）
 
@@ -150,15 +185,15 @@
 
 - **前端：webview 裡的 TS SPA（React 或 Svelte）。** 參考專案（nexu-io/open-design、OpenCoworkAI/open-codesign）真正搬得動的是 **live 面板的 UI**，不是它們的 Node daemon；daemon 那一半改用 Rust 重寫——是一次**有邊界的翻譯**（一條 gate 路由 + 一個 JSON store + 一次 PATH 掃描），不是重新設計。這是選擇桌面原生要誠實付的代價。
 
-- **介面圖示：內嵌 Lucide 的 path，不是 emoji、也不能是 SF Symbols（2026-07-30）。** 原本用 emoji 撐著，但 emoji 是裝飾不是介面：自帶顏色、自帶字面度量、每個作業系統一張臉——密集的工具型介面必須掌控的三件事，它三件都不給。SF Symbols 兩條路都不通：授權只允許用在「跑在 Apple 作業系統上的軟體介面」，webview 裡的網頁與跨平台 app 都不在範圍內；而且 Windows／Linux 上根本沒有那套字型，形態選型早就把它們算在裡面了。做法是把 Lucide（ISC）的十五個 path 內嵌進 `ui/src/Icon.tsx` 一個檔案：以 `currentColor` 描邊，所以一個圖示就是它旁邊那行字的顏色——`--dim`／`--accent`／`--bad` 與深淺兩套主題全部自動生效，不必為圖示再開一組色票；共用同一個 24 網格，彼此對得齊，也對得上介面裡原本就手寫的那兩個側欄開合圖示。**內嵌而不是 `npm i lucide-react`**：整個 app 只用到十五個，為此扛一個依賴，對想 fork 的人來說要解釋的東西比那些 path 本身還多（「乾淨到容易看懂、容易 fork」是本專案的功能之一）。key 沿用 Lucide 原名，任何一個都能回 lucide.dev 查證或替換。刻意留成文字的例外有兩類：真正的鍵盤符號（`<kbd>` 裡的 ⌘），以及 Claude Code 自己寫進終端機標題的狀態標記（`·`／`✳`）——後者是拿來 parse 的資料，不是畫給人看的圖示。
+- **介面圖示：內嵌 Lucide 的 path，不是 emoji、也不能是 SF Symbols（2026-07-30）。** 原本用 emoji 撐著，但 emoji 是裝飾不是介面：自帶顏色、自帶字面度量、每個作業系統一張臉——密集的工具型介面必須掌控的三件事，它三件都不給。SF Symbols 兩條路都不通：授權只允許用在「跑在 Apple 作業系統上的軟體介面」，webview 裡的網頁與跨平台 app 都不在範圍內；而且 Windows／Linux 上根本沒有那套字型，形態選型早就把它們算在裡面了。做法是把 Lucide（ISC）的十四個 path 內嵌進 `ui/src/Icon.tsx` 一個檔案：以 `currentColor` 描邊，所以一個圖示就是它旁邊那行字的顏色——`--dim`／`--accent`／`--bad` 與深淺兩套主題全部自動生效，不必為圖示再開一組色票；共用同一個 24 網格，彼此對得齊，也對得上介面裡原本就手寫的那兩個側欄開合圖示。**內嵌而不是 `npm i lucide-react`**：整個 app 只用到十四個，為此扛一個依賴，對想 fork 的人來說要解釋的東西比那些 path 本身還多（「乾淨到容易看懂、容易 fork」是本專案的功能之一）。key 沿用 Lucide 原名，任何一個都能回 lucide.dev 查證或替換。刻意留成文字的例外有兩類：真正的鍵盤符號（`<kbd>` 裡的 ⌘），以及 Claude Code 自己寫進終端機標題的狀態標記（`·`／`✳`）——後者是拿來 parse 的資料，不是畫給人看的圖示。
 
 - **儲存：每個目標一個 serde-JSON 檔，包在 `RwLock` 後面**（最薄、最好 fork、符合 local-first 單人定位）。等真的出現「webview 端編輯」與「閘門端讀取」的並發爭用再換 `rusqlite`。GUI 核心與閘門打的是**同一個 in-process store**——人改到的就是閘門每一輪讀到的，「活契約」不需要任何跨行程同步。
 
-- **中心狀態機：閘門的放行 ≠ 項目的通過。** agent 永不等人——所以 Stop 的放行條件是「客觀項全過 ∧ 主觀項都已攤出詮釋＋證據 ∧ 已對齊契約最新版」，**不是**「全部通過」；「agent 已收工、證據攤著等人看」是目標的正常結束態。**被豁免的項目在以上每一條之前就被略過**（不攔、不要求證據）——那是原則 5「逐目標選擇監看」在單一項目上的另一半。契約帶單調遞增的版本號（同時鏡射進上膛標記檔，讓送信通道的「沒變化」判斷不必碰網路）；每條證據、每次 reconcile 都蓋「對齊到第 N 版」的章——事後裁判的信任基礎，是能證明「agent 看過我那條修改」。目標收攤後清單仍可查看，但 UI 要明說「不再有 agent 讀這裡；要變更就重新下目標」（原則 5 的邊界）。
+- **中心狀態機：閘門的放行 ≠ 項目的通過。** agent 永不等人——所以 Stop 的放行條件是「客觀項全過 ∧ 主觀項都已攤出詮釋＋證據 ∧ 已對齊契約最新版」，**不是**「全部通過」；「agent 已收工、證據攤著等人看」是目標的正常結束態。**不想檢查的項目直接從契約刪掉**（連同證據），那是原則 5「逐目標選擇監看」在單一項目上的另一半；舊存檔裡被豁免的項目則在放行條件的每一條之前就被略過（不攔、不要求證據）。契約帶單調遞增的版本號（同時鏡射進上膛標記檔，讓送信通道的「沒變化」判斷不必碰網路）；每條證據、每次 reconcile 都蓋「對齊到第 N 版」的章——事後裁判的信任基礎，是能證明「agent 看過我那條修改」。目標收攤後清單仍可查看，但 UI 要明說「不再有 agent 讀這裡；要變更就重新下目標」（原則 5 的邊界）。
 
 - **主觀項的判斷 = Claude Code 自己的 prompt／agent hook**（裝在 `settings.json`），由 Claude Code 拿**使用者自己的憑證**去跑。v1 的 Witnos 行程內**完全不必接 LLM**——「Rust 沒有 Anthropic Agent SDK」因此不構成問題。Rust 核心只負責儲存 agent 的理解與證據，並主動標記重新詮釋（原則 6）。
 
-- **人的三個槓桿都會推進版本（2026-07-29）。** 改尺、退回、豁免各自都 bump `contract_version` 並蓋掉該項的 `last_edited_version`——這才是它們能傳到**還在跑**的 agent 的原因（PostToolUse 送信通道靠版本比對），而不是只在它想收工時才於閘門撞到。只改狀態而不 bump 的動作對送信通道是隱形的，那正是「退回了卻好像沒用」的原始成因。目標另外帶 `last_human_edit_version`，只由人的動作推進：agent 自己攤項目時也會 bump 版本，所以「版本動了」不能當成「人改了東西」用，否則每一輪正常執行都會對人叫（違反原則 4）。
+- **人的兩個槓桿都會推進版本（2026-07-29 立，2026-08-02 由三收成二）。** 改尺與刪除各自都 bump `contract_version`（改尺另蓋該項的 `last_edited_version`）——這才是它們能傳到**還在跑**的 agent 的原因（PostToolUse 送信通道靠版本比對），而不是只在它想收工時才於閘門撞到。只改狀態而不 bump 的動作對送信通道是隱形的，那正是當年「退回了卻好像沒用」的原始成因；那顆按鈕後來連同 `rejected` 狀態一起拆了，因為改尺已經把它該做的全做完了。目標另外帶 `last_human_edit_version`，只由人的動作推進：agent 自己攤項目時也會 bump 版本，所以「版本動了」不能當成「人改了東西」用，否則每一輪正常執行都會對人叫（違反原則 4）。
 
 - **終端機活得比 app 久（2026-07-30，已端到端確認）。** goal 綁一個 session id，而那個 id 永不復生 —— 所以 GUI 一關就把 shell 掛斷，等於一份契約的壽命只有一次 app 執行：辛苦長出來的驗證項在下次開啟時對 agent 已經是死的。改由 `witnos pty-serve` 持有那些 shell，也就是 tmux 唯一承重的那個把戲，但不把 tmux 變成依賴（承重路徑維持單一語言、單一 repo，而那支 headless bin 本來就不准依賴 `tauri`）。協議的完整規格住在該模組的檔頭；形狀是**一個 socket、兩種連線**：控制連線走 newline-delimited JSON（open／list／resize／kill／**foreground**），資料連線一個 session 一條、hello 之後就是**不帶任何 framing 的裸位元流** —— agent 印幾 MB 的時候，不該為 base64 或每塊表頭付錢。attach 時先回放有界的 scrollback，再無縫接上即時輸出；那個接縫由結構保證，不是靠時序湊。session id 跨 daemon 重啟單調遞增且永不重用：id 就是 goal 用來指名「我的 agent 住在哪個終端機」的東西，重發一個還活著的 id 等於把修正打給錯的 agent。
 
@@ -170,9 +205,9 @@
 
 - **把修正打回 agent 的終端機（2026-07-29）。** 對一個已經收工的 agent，事後裁判若無法回到執行流程就等於沒有發生——所以修正必須能開啟新的一回合。app 本來就擁有 agent 所在的那個終端機，於是走 PTY：每個 shell 都蓋上 `WITNOS_PANE`（與 `WITNOS_TERMINAL` 同一套繼承手法），UserPromptSubmit hook 把它記到 session 綁定上，IPC 命令由 goal → session → pane 找到那個 shell 並寫入一行。**安全守則是「pane 裡有沒有前景程式」**——與輸入 `cd` 的守則正好相反（那個需要有 shell 才能執行指令），把散文打進裸 shell 會被當指令跑掉。至於 agent 是閒置還是正在工作，**不是安全問題**（鍵盤輸入只會落在 Claude Code 的輸入框），只是禮貌：UI 讀 Claude Code 自己publish 的 OSC 標題（`·` 閒置、`✳` 工作中），工作中就不打字——因為送信通道本來就會在它下一次 tool call 帶到。
 
-- **`witnos init`**：裝進**專案層級**的 `.claude/settings.json`（不是使用者全域——見下面的上膛／退膛協議），共四樣：Stop 與 PostToolUse 兩個 command hook（都指向 app 內打包的 `witnos` bin，絕對路徑）、主觀判斷用的 prompt hook，外加一小段**契約書寫規範**的 prompt（每條＝主張＋怎麼驗＋附什麼證據；主觀條必附詮釋；初版契約攤完後，agent 須再做一輪 **blindspot pass**——提出「使用者可能沒想到要驗」的候選項，預設主觀，等人處置：改尺／退回／豁免；**外加「契約要用使用者自己的語言寫」**——這段 prompt 本身是英文，光這樣就足以讓 agent 拿英文的 claim 與證據回答一個繁體中文的目標，而人讀不懂的證據觸發不了任何東西，那正是原則 1 的全部機制。規則綁的是使用者自己的 prompt，不是 app 的 UI 語言：hook 讀不到 webview 的設定，而且使用者正在對 agent 打的字本來就是更好的訊號）——hook 只能逼 agent 停下，好契約要靠 prompt 端寫出來。**App 的「監看專案（自動）」會代跑 `witnos init`**（shell out 到 bundle 內的 bin，實作只有一份；bin 內的 `current_exe()` 就是正確的 hook 絕對路徑），再把目錄記進 registry 並上膛；「資料夾要先受 Claude Code 信任」的前提以 UI 提示浮出。
+- **`witnos init`**：裝進**專案層級**的 `.claude/settings.json`（不是使用者全域——見下面的上膛／退膛協議），共四樣：Stop 與 PostToolUse 兩個 command hook（都指向 app 內打包的 `witnos` bin，絕對路徑）、主觀判斷用的 prompt hook，外加一小段**契約書寫規範**的 prompt（每條＝主張＋怎麼驗＋附什麼證據；主觀條必附詮釋；初版契約攤完後，agent 須再做一輪 **blindspot pass**——提出「使用者可能沒想到要驗」的候選項，預設主觀，等人處置：改尺／刪除；**外加「契約要用使用者自己的語言寫」**——這段 prompt 本身是英文，光這樣就足以讓 agent 拿英文的 claim 與證據回答一個繁體中文的目標，而人讀不懂的證據觸發不了任何東西，那正是原則 1 的全部機制。規則綁的是使用者自己的 prompt，不是 app 的 UI 語言：hook 讀不到 webview 的設定，而且使用者正在對 agent 打的字本來就是更好的訊號）——hook 只能逼 agent 停下，好契約要靠 prompt 端寫出來。**App 的「監看專案（自動）」會代跑 `witnos init`**（shell out 到 bundle 內的 bin，實作只有一份；bin 內的 `current_exe()` 就是正確的 hook 絕對路徑），再把目錄記進 registry 並上膛；「資料夾要先受 Claude Code 信任」的前提以 UI 提示浮出。
 
-- **契約 schema 與 Agent 寫入路徑（2026-07-26 定，詳見 `docs/schema-v1.md`）：** Goal／Item／Evidence／Event 的欄位、放行條件的形式化、origin 儀表（強版假設讀數）都定在該檔。Agent 對 store 的讀寫走**同一支 headless bin 的子命令**（用 Bash 呼叫）——能跑 shell 指令是所有 coding agent 的最大公約數，endpoint／token 封裝在 bin 內、prompt 端不碰憑證。bin 命名同時收斂：**單一 headless bin 名為 `witnos`**（上文 `witnos-gate` 的角色成為它的 `hook` 子命令家族；不依賴 `tauri` crate 的約束不變）。
+- **契約 schema 與 Agent 寫入路徑（2026-07-26 定，細節在本地工作文件 `docs/schema-v1.md`，未隨公開樹散布）：** Goal／Item／Evidence／Event 的欄位、放行條件的形式化、origin 儀表（強版假設讀數）都定在該檔。Agent 對 store 的讀寫走**同一支 headless bin 的子命令**（用 Bash 呼叫）——能跑 shell 指令是所有 coding agent 的最大公約數，endpoint／token 封裝在 bin 內、prompt 端不碰憑證。bin 命名同時收斂：**單一 headless bin 名為 `witnos`**（上文 `witnos-gate` 的角色成為它的 `hook` 子命令家族；不依賴 `tauri` crate 的約束不變）。
 
 - **發佈：** 單一簽章 `.app`／`.exe`，跑在作業系統 webview 上（十幾二十 MB 的量級，不是 Electron 的重量）。自用 dogfood 階段直接跑**未簽章／ad-hoc 簽章**——macOS 公證與 Windows 簽章延後到要裝到別人機器時再說，不擋 v1 驗證。
 
@@ -187,7 +222,7 @@
   - **SessionEnd hook（第四個裝進 settings 的 hook；2.1.220 實測存在，輸入含 `session_id`／`cwd`／`reason`）**：session 結束時自己名下的 goal 仍在 `running` → 入帳 `turn_ended_unmet`，側欄不再出現「沒有 agent 會回來完成」的殭屍 running 目標。純記帳、fail open；只認 marker `sessions` 的精確條目（共用的 default goal 不因單一 session 結束被翻）；同 session 續跑再觸發守門 → 自動復活成 `running`。
   - Stop hook 輸入的 `stop_hook_active` 旗標要處理，把「fail-closed 的刻意 stall」與「無限 block 迴圈」在語意上分開。
   - 長任務會經歷 context 壓縮：reconcile 時讓 agent 重讀 store 裡自己上次的詮釋，避免壓縮後重新發明一套理解。
-  - 已對過官方 hooks 文件，並以 Claude Code 2.1.220 實測（2026-07-26；方法、原始記錄與可重跑的 harness 見 `spike/hooks-2026-07-26/`）：
+  - 已對過官方 hooks 文件，並以 Claude Code 2.1.220 實測（2026-07-26；方法、原始記錄與可重跑的 harness 在本地工作文件 `spike/hooks-2026-07-26/`，未隨公開樹散布）：
     - **送信兩條通道實測都通**：PostToolUse 現已支援 `hookSpecificOutput.additionalContext`（與 2026-07-03 的舊記載相反；注入位置在 tool result 旁），**exit code 2＋stderr** 也有效（「Shows stderr to Claude」；工具已跑完，不會擋到任何東西）。送信用 additionalContext，stderr 留作 fallback。matcher 用 `"*"`；command hook 預設逾時 600 秒，可用 `timeout` 欄位覆寫。（舊記載的 `continueOnBlock` 已不在文件中，不要依賴。）
     - **Stop 的 `{"decision":"block","reason":…}` 實測有效**，且 reason 字串能實際引導 agent 的下一步。輸入中的 `stop_hook_active` 文件已不載但實際仍在（首擋 false、其後 true）；輸入另有 `last_assistant_message`、`transcript_path`；UserPromptSubmit 輸入也有 `session_id`——目標↔session 綁定可行。
     - **Stop 連續 block 上限實測＝8**：第 9 次連續 block 的 reason 會進 transcript，但回合就此結束（headless 下 stdout 為空、無警告）。上膛卡住因此不是無限的——目標要以「回合已結束、未達放行條件」入帳，不能假設 block 能永遠拖住 agent。
@@ -264,4 +299,10 @@
 
 ## 授權
 
-開源（待定；建議 Apache-2.0 或 MIT，依你對專利條款的需求決定）。
+Copyright © 2026 CHENG YEH TSAI
+
+**MIT OR Apache-2.0 雙授權**（2026-08-02 定案）——你選一個用就好，兩份全文在 `LICENSE-MIT` 與 `LICENSE-APACHE`。（`LICENSE-APACHE` 是 Apache 官方原文，未經修改；它結尾的附錄是「如何把授權加到你的作品上」的模板，不是本專案的宣告，著作權人以此處與 `LICENSE-MIT` 為準。）
+
+這是 Rust 生態的預設（rust-lang 自己與絕大多數 crate 都如此），也正好對上本專案的定位：「乾淨到容易看懂、容易 fork」是自陳的功能之一，那就把選擇權交給下游——要專利授權與報復條款的保障就走 Apache-2.0，要塞進 GPLv2 專案就走 MIT。原始碼檔案不加 license 標頭：四個 crate 的 `Cargo.toml` 已宣告 `license = "MIT OR Apache-2.0"`，每個檔案再蓋一次只是噪音。
+
+除非你另行聲明，否則你有意提交進本專案的貢獻，一律以同樣的雙授權釋出（Apache-2.0 第 5 條的標準表述）。
