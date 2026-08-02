@@ -30,11 +30,11 @@
 
 Agents rarely fail loudly. They choose a plausible standard, verify against it, and confidently stop. On a long run, a wrong assumption in step one becomes architecture by step ten.
 
-**Witnos puts the definition of done where both of you can see it — while correction is still cheap.**
+**Witnos makes the definition of done visible while correction is still cheap.**
 
 ## How it works
 
-1. **Expose the yardstick.** Claude lays out each criterion as a claim, a check, and the evidence behind it.
+1. **Make the completion criteria explicit.** Claude lays out each criterion as a claim, a check, and the evidence behind it.
 2. **Change it live.** Edit a criterion while Claude is working. The delta reaches it after its next tool call.
 3. **Gate “done.”** When Claude tries to stop, Witnos checks the latest contract and sends it back if the evidence is stale or incomplete.
 
@@ -79,9 +79,9 @@ That is the whole point: **catch the wrong assumption before it compounds.**
 
 ## Safe by scope
 
-Only projects you explicitly watch are armed. Auto-created goals only apply to Claude sessions started inside Witnos's terminal; your other terminals and projects are untouched.
+Only projects you explicitly watch enable the Stop gate. Auto-created goals only apply to Claude sessions started inside Witnos's terminal; your other terminals and projects are untouched.
 
-Use **stop watching** to opt out. If a crash leaves a watched agent at the Stop gate, reopen Witnos or run <code>/Applications/Witnos.app/Contents/Resources/bin/witnos disarm</code> from the project root. Installed hooks remain inert when the project is not armed.
+Use **stop watching** to opt out. If a crash leaves a watched agent at the Stop gate, reopen Witnos or run <code>/Applications/Witnos.app/Contents/Resources/bin/witnos disarm</code> from the project root. Installed hooks remain inert when watching is off.
 
 ## Current limits
 

@@ -14,7 +14,7 @@ That line does not coincide with subjective-versus-objective. Subjective goals o
 
 The gap itself is an old problem — the specification gap, the oracle problem, and Goodhart's law are all relatives. **Long unattended runs make it acute**: with nobody watching, a deviation missed in step one becomes the foundation of step two, compounding silently, so that by the time the agent says "done" what's bent is an entire chain of decisions rather than one file.
 
-**The core claim: wherever "done" can mean two different things, the agent must not be the sole judge of its own completion. The human needs somewhere that yardstick is visible and steerable.**
+**The core claim: wherever "done" can mean two different things, the agent must not be the sole judge of its own completion. The completion criteria need to be visible and editable by the human.**
 
 ### The loop
 
@@ -53,9 +53,9 @@ The tool guides the agent to decompose fuzzy standards into checkable proxy metr
 - **Objective items**: the agent may self-check and self-pass.
 - **Subjective items**: proxy metrics only carry evidence to the human. **The agent may never declare one passed.**
 
-*Revised 2026-07-29.* This used to read "passing requires a human nod", and there really was an approve button. It was removed: it changed nothing about the agent (the release condition already treated "laid" and "approved" alike), and the human's honest default is that the agent's work is presumed right. So subjective items have no pass state at all — the terminal state is "evidence laid, and the human either moved the yardstick or didn't." Agreement is silence; only disagreement needs an action.
+*Revised 2026-07-29.* This used to read "passing requires a human nod", and there really was an approve button. It was removed: it changed nothing about the agent (the release condition already treated "laid" and "approved" alike), and the human's honest default is that the agent's work is presumed right. So subjective items have no pass state at all — the terminal state is "evidence laid, and the human either changed the criterion or didn't." Agreement is silence; only disagreement needs an action.
 
-*Revised again 2026-08-02.* Two more levers went. **Send-back** meant "the criterion stands, but your evidence doesn't pass" — except editing already reopens the item, bumps the version, stales the evidence and reaches the running agent, so re-saving even the same words says the same thing; and when the agent misread a criterion, writing it clearer beats telling it "again". **Waiving** parked an item in a state nobody checked; a contract accumulating tombstones is exactly the reading load principle 4 exists to cut, so ✕ now deletes, evidence and all. The human has two levers left: **edit the yardstick, or delete the item.**
+*Revised again 2026-08-02.* Two more levers went. **Send-back** meant "the criterion stands, but your evidence doesn't pass" — except editing already reopens the item, bumps the version, stales the evidence and reaches the running agent, so re-saving even the same words says the same thing; and when the agent misread a criterion, writing it clearer beats telling it "again". **Waiving** parked an item in a state nobody checked; a contract accumulating tombstones is exactly the reading load principle 4 exists to cut, so ✕ now deletes, evidence and all. The human has two levers left: **edit the criterion, or delete the item.**
 
 Never let subjective items auto-pass on proxy metrics. That is the Goodhart trap: the agent satisfies the numbers and produces something where every metric is right and the whole is wrong. This line is held absolutely.
 
