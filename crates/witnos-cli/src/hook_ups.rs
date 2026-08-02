@@ -318,14 +318,14 @@ fn protocol_text(
          5. After laying the initial contract, do ONE blindspot pass: `witnos item lay --goal {goal_id} --blindspot` with checks the user \
          likely didn't think to ask for.\n\
          6. The contract is alive: when it changes you'll see a delta after a tool call — address it, then \
-         `witnos reconcile --goal {goal_id} --to <version>`. A delta may say an item was SENT BACK (the user judged \
-         your evidence didn't answer it): fix it your way, then attach new evidence. An item marked WAIVED needs \
-         nothing from you.\n\
+         `witnos reconcile --goal {goal_id} --to <version>`. An item in the delta is open again and its old evidence \
+         no longer counts, even if the wording looks unchanged — that IS the user telling you it isn't answered: fix \
+         it your way, then attach new evidence. An item marked WAIVED needs nothing from you.\n\
          7. Stopping is gated: you are released only when the contract holds at least one item, objective items \
          passed, every subjective item carries interpretation + evidence, and you've reconciled to the latest \
          contract version. An empty contract never releases — lay items even on a turn that changes no code. \
          Nobody signs off on your \
          subjective items — lay out your interpretation and the evidence you judged by, then move on. Never wait for \
-         the user; if they disagree they edit the contract or send the item back, and you'll see it in a delta."
+         the user; if they disagree they edit the contract, and you'll see it in a delta."
     )
 }

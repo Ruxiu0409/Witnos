@@ -1,8 +1,8 @@
 //! The Witnos GUI core: a Tauri shell that spawns the axum server on startup
 //! and exposes the HUMAN side of the store over IPC. The trust split is
 //! structural: the webview (human) uses these in-process commands — including
-//! `reject_item` and `waive_item`, which the HTTP surface will never let an
-//! agent reach cleanly — while agents go through the `witnos` CLI over HTTP.
+//! `delete_item`, which the HTTP surface will never let an agent reach cleanly —
+//! while agents go through the `witnos` CLI over HTTP.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 use tauri::{Manager, State};
-use witnos_core::{Actor, Goal, GoalStatus, NewItem, Origin, Pointer};
+use witnos_core::{Actor, Goal, GoalStatus, ItemEdit, NewItem, Origin, Pointer};
 use witnos_server::AppState;
 
 struct App(Arc<AppState>);
@@ -136,6 +136,12 @@ fn add_item(
     Ok(json!({"ok": true}))
 }
 
+/// Editing is the human's whole disagreement lever (send-back was removed on
+/// 2026-08-02): it reopens the item and bumps the contract version, so it
+/// reaches a still-running agent through the delivery channel instead of
+/// waiting for the gate. `after_drill_down` records whether they opened an
+/// evidence original before moving the yardstick — the anti-rubber-stamping
+/// signal (principle 6).
 #[tauri::command]
 fn edit_item(
     state: State<'_, App>,
@@ -143,54 +149,40 @@ fn edit_item(
     item_id: String,
     claim: String,
     check: String,
-) -> Result<Value, String> {
-    state
-        .0
-        .store
-        .edit_item(&goal_id, &item_id, Some(claim), Some(check), None, Actor::Human)
-        .map_err(|e| e.to_string())?;
-    resync(&state, &goal_id);
-    Ok(json!({"ok": true}))
-}
-
-/// Send an item back. There is no approve counterpart: the agent's work is
-/// presumed correct, and this bumps the contract version like an edit does, so
-/// the rejection reaches a still-running agent through the delivery channel.
-/// `after_drill_down` records whether the human opened the evidence original
-/// first — the anti-rubber-stamping signal (principle 6).
-#[tauri::command]
-fn reject_item(
-    state: State<'_, App>,
-    goal_id: String,
-    item_id: String,
     after_drill_down: bool,
 ) -> Result<Value, String> {
     state
         .0
         .store
-        .reject_item(&goal_id, &item_id, after_drill_down)
+        .edit_item(
+            &goal_id,
+            &item_id,
+            ItemEdit {
+                claim: Some(claim),
+                check: Some(check),
+                class: None,
+            },
+            Actor::Human,
+            after_drill_down,
+        )
         .map_err(|e| e.to_string())?;
     resync(&state, &goal_id); // the marker mirrors the bump for the delivery channel
     Ok(json!({"ok": true}))
 }
 
-/// Per-item opt-out: "I don't want this one checked". The gate then ignores it
-/// entirely. Human-only, exactly like rulings — an agent must never be able to
-/// excuse itself from a check.
+/// Per-item opt-out: "I don't want this one checked". Takes the item out of the
+/// contract along with its evidence — irreversible, which is why the UI asks
+/// twice. Human-only, exactly like editing: an agent must never be able to
+/// excuse itself from a check, let alone delete one.
 #[tauri::command]
-fn waive_item(
-    state: State<'_, App>,
-    goal_id: String,
-    item_id: String,
-    waived: bool,
-) -> Result<Value, String> {
+fn delete_item(state: State<'_, App>, goal_id: String, item_id: String) -> Result<Value, String> {
     state
         .0
         .store
-        .waive_item(&goal_id, &item_id, waived)
+        .delete_item(&goal_id, &item_id)
         .map_err(|e| e.to_string())?;
-    // Waiving moves the contract version too (an agent still checking a waived
-    // item is wasted work), so the marker has to mirror the bump or the
+    // Deleting moves the contract version too (an agent still checking a
+    // deleted item is wasted work), so the marker has to mirror the bump or the
     // delivery channel's zero-network check would never notice.
     resync(&state, &goal_id);
     Ok(json!({"ok": true}))
@@ -541,8 +533,7 @@ fn main() {
             create_goal,
             add_item,
             edit_item,
-            reject_item,
-            waive_item,
+            delete_item,
             send_to_agent,
             drill_down,
             close_goal,

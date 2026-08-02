@@ -82,7 +82,8 @@ fn try_deliver() -> Option<()> {
     // Always a delta, never the full list — re-feeding hundreds of items
     // makes the agent re-litigate passed work and burns tokens.
     let ctx = format!(
-        "[witnos] The verification contract moved to v{version} (you were synced to v{since}). Changed items:\n{summary}\n\
+        "[witnos] The verification contract moved to v{version} (you were synced to v{since}). The delta \
+         (items changed, and items REMOVED — stop working on those):\n{summary}\n\
          Address the delta, update interpretations/evidence through the `witnos` CLI, then run \
          `witnos reconcile --goal {} --to {version}`.",
         entry.goal_id

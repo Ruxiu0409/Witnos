@@ -12,5 +12,5 @@ pub mod types;
 
 pub use gate::{evaluate, GateOutcome};
 pub use registry::ProjectRegistry;
-pub use store::{NewEvidence, NewItem, Store, StoreError};
+pub use store::{ItemEdit, NewEvidence, NewItem, Store, StoreError};
 pub use types::*;

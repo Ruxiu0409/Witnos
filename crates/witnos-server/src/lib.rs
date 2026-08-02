@@ -101,7 +101,6 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/goals/{id}/evidence", post(api::add_evidence))
         .route("/goals/{id}/oracle", post(api::report_oracle))
         .route("/goals/{id}/reconcile", post(api::reconcile))
-        .route("/goals/{id}/rulings", post(api::reject))
         .route("/goals/{id}/drilldown", post(api::drill_down))
         .layer(middleware::from_fn_with_state(state.clone(), auth))
         .with_state(state)

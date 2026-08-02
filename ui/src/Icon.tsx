@@ -11,7 +11,7 @@ import type { ReactNode } from "react";
  *  hand-rolled sidebar toggles that were already here.
  *
  *  Inlined rather than `npm i lucide-react` because the whole app needs
- *  fifteen of them: a dependency for that is more for someone forking this to
+ *  fourteen of them: a dependency for that is more for someone forking this to
  *  take on than the paths are to read. Keys are Lucide's own names, so any of
  *  them can be looked up — or replaced — at lucide.dev.
  *
@@ -88,12 +88,6 @@ const PATHS = {
       <path d="m7 11 2-2-2-2" />
       <path d="M11 13h4" />
       <rect width="18" height="18" x="3" y="3" rx="2" />
-    </>
-  ),
-  "corner-up-left": (
-    <>
-      <path d="M9 14 4 9l5-5" />
-      <path d="M20 20v-7a4 4 0 0 0-4-4H4" />
     </>
   ),
   "rotate-cw": (

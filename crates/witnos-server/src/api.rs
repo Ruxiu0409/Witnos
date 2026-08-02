@@ -13,8 +13,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use witnos_core::{
-    evaluate, Actor, Class, EventKind, GateDecisionKind, Goal, Item, ItemStatus, NewEvidence,
-    NewItem, Pointer, StoreError, Version,
+    evaluate, Actor, Class, EventKind, GateDecisionKind, Goal, Item, ItemEdit, ItemStatus,
+    NewEvidence, NewItem, Pointer, StoreError, Version,
 };
 
 use crate::{resync_dir, resync_goal_dir, AppState};
@@ -340,6 +340,9 @@ pub async fn contract(
         "agent_synced_version": goal.agent_synced_version,
         "summary": render_delta(&goal, since),
         "items": items,
+        // Claims only: after a deletion the id names nothing, so it would be a
+        // handle onto nowhere. This is "stop working on these", not a lookup.
+        "removed": goal.deletions_since(since),
     }))
     .into_response()
 }
@@ -364,12 +367,15 @@ fn brief(i: &Item) -> Value {
 }
 
 /// Always a delta, never the full list (unless asked from v0).
+///
+/// Two halves, because the human has two levers. Changed items come from
+/// `items_since`; DELETED ones cannot — the row is gone — so they come off the
+/// event log, and they have to be here: otherwise the agent spends the rest of
+/// its turn on a criterion nobody holds and learns better only by hitting
+/// `ItemNotFound`.
 fn render_delta(goal: &Goal, since: Version) -> String {
-    let items = goal.items_since(since);
-    if items.is_empty() {
-        return "(no items changed)".to_string();
-    }
-    items
+    let mut lines: Vec<String> = goal
+        .items_since(since)
         .iter()
         .map(|i| {
             format!(
@@ -381,28 +387,34 @@ fn render_delta(goal: &Goal, since: Version) -> String {
                 delta_note(i),
             )
         })
-        .collect::<Vec<_>>()
-        .join("\n")
+        .collect();
+    lines.extend(goal.deletions_since(since).iter().map(|claim| {
+        format!("- REMOVED from the contract: \"{claim}\" — nothing needed from you anymore")
+    }));
+    if lines.is_empty() {
+        return "(no items changed)".to_string();
+    }
+    lines.join("\n")
 }
 
-/// Why an item is in the delta, when the claim text alone wouldn't say. A
-/// rejection and a waiver both reach the agent through this channel, so they
-/// have to read as "sent back" and "stop working on this" rather than as fresh
-/// edits — the required action is the opposite in each case.
+/// Why an item is in the delta, when the claim text alone wouldn't say. Only a
+/// legacy waived item needs one (the opt-out is a deletion since 2026-08-02,
+/// and deletions get their own line above): the required action is the opposite
+/// of an edit's — stop, rather than address it.
 ///
-/// An UN-waived item needs no note: it comes back as `Open`, and "changed,
-/// address it" is exactly the right reading — the same one an edit gets, and the
-/// same work.
+/// An ordinary changed item needs no note: it is `Open` again, and "changed,
+/// address it" is exactly the right reading. So is a re-saved item, which is how
+/// the human disagrees now that send-back is gone: the claim is in the delta,
+/// its evidence is stale, and the gate holds until fresh evidence answers the
+/// current version.
 fn delta_note(item: &Item) -> &'static str {
     match item.status {
-        ItemStatus::Rejected => "  ← SENT BACK by the human: your evidence didn't answer it; \
-                                 re-address and attach new evidence",
         ItemStatus::Waived => "  ← WAIVED by the human: nothing needed from you",
         _ => "",
     }
 }
 
-// ---------- items / evidence / rulings ----------
+// ---------- items / evidence ----------
 
 #[derive(Deserialize)]
 pub struct LayReq {
@@ -430,12 +442,8 @@ pub async fn lay_items(
 #[derive(Deserialize)]
 pub struct EditReq {
     pub actor: Actor,
-    #[serde(default)]
-    pub claim: Option<String>,
-    #[serde(default)]
-    pub check: Option<String>,
-    #[serde(default)]
-    pub class: Option<Class>,
+    #[serde(flatten)]
+    pub edit: ItemEdit,
 }
 
 pub async fn edit_item(
@@ -445,7 +453,10 @@ pub async fn edit_item(
 ) -> Response {
     match state
         .store
-        .edit_item(&id, &item_id, req.claim, req.check, req.class, req.actor)
+        // `after_drill_down` is false over HTTP by construction: this surface is
+        // the agent's, and the signal it records is a human opening an evidence
+        // original. The human's edits come through IPC, which sets it.
+        .edit_item(&id, &item_id, req.edit, req.actor, false)
     {
         Ok(()) => match state.store.get_goal(&id) {
             Some(goal) => {
@@ -535,40 +546,6 @@ pub async fn reconcile(
             }
             Json(json!({"agent_synced_version": req.to_version})).into_response()
         }
-        Err(e) => err(e),
-    }
-}
-
-#[derive(Deserialize)]
-pub struct RuleReq {
-    pub item_id: String,
-    #[serde(default)]
-    pub after_drill_down: bool,
-}
-
-/// Send an item back — the only ruling there is (the agent's work is presumed
-/// correct otherwise). Human-only by contract: the HTTP layer cannot
-/// distinguish callers yet (one shared local token); the agent-facing CLI
-/// simply does not expose this. Proper separation lands when the UI moves
-/// in-process (Tauri).
-pub async fn reject(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Json(req): Json<RuleReq>,
-) -> Response {
-    match state
-        .store
-        .reject_item(&id, &req.item_id, req.after_drill_down)
-    {
-        // A rejection bumps the contract version, so the marker has to mirror
-        // it or the delivery channel's local check would miss the delta.
-        Ok(()) => match state.store.get_goal(&id) {
-            Some(goal) => {
-                resync_goal_dir(&state, &goal);
-                Json(json!({"version": goal.contract_version})).into_response()
-            }
-            None => err(StoreError::GoalNotFound(id)),
-        },
         Err(e) => err(e),
     }
 }

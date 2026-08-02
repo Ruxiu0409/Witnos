@@ -75,21 +75,25 @@ pub enum Class {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ItemStatus {
+    /// (`rejected` in goals stored before send-back was removed lands here: a
+    /// sent-back item was one the agent had to re-address with fresh evidence,
+    /// which is exactly what `open` already means. See `edit_item`.)
+    #[serde(alias = "rejected")]
     Open,
     /// Interpretation + evidence laid out — the terminal state of a subjective
     /// item. The agent's work is presumed correct from here; the human's lever
-    /// is editing the yardstick or sending the item back, not blessing it.
+    /// is editing the yardstick or waiving the item, not blessing it.
     /// (`approved` in goals stored before approval was removed lands here — an
     /// approved item was a laid item the human had also nodded at.)
     #[serde(alias = "approved")]
     Laid,
     /// Objective only: oracle passed, agent self-passed.
     Passed,
-    /// Subjective only: the human sent it back; while the goal is running the
-    /// agent must re-address it (new evidence moves it back to Laid).
-    Rejected,
-    /// The human opted this one item out — `unwatch` narrowed to a single
-    /// item. The gate ignores it entirely: no evidence demanded, no block.
+    /// Historical only: the human's per-item opt-out, replaced by deletion on
+    /// 2026-08-02. Nothing produces it anymore, but goals written before then
+    /// carry waived items and the gate must go on ignoring them — aliasing this
+    /// onto `Open` would silently re-arm the gate against a check its owner had
+    /// already opted out of, which is the one thing a load must never do.
     Waived,
 }
 
@@ -194,6 +198,14 @@ pub enum EventKind {
         item_id: ItemId,
         by: Actor,
         version_after: Version,
+        /// Did the human open an evidence original before moving this
+        /// yardstick? The anti-rubber-stamping signal (principle 6), and half
+        /// of the drill-down log the raw-trace layer will be specified from.
+        /// It used to hang off `Ruling`; editing is now the whole of
+        /// disagreement, so it hangs here. Always false for an agent edit, and
+        /// for goals stored before the field existed.
+        #[serde(default)]
+        after_drill_down: bool,
     },
     EvidenceAdded {
         evidence_id: EvidenceId,
@@ -212,20 +224,36 @@ pub enum EventKind {
         against_version: Version,
     },
     /// Human opened the original behind an evidence pointer. Together with a
-    /// following Ruling{after_drill_down: true} this log IS the requirements
-    /// spec for the future raw-trace layer's filtering.
+    /// following ContractEdited{after_drill_down: true} — or an item added with
+    /// origin `UserViewingEvidence` — this log IS the requirements spec for the
+    /// future raw-trace layer's filtering.
     DrillDown {
         evidence_id: EvidenceId,
         pointer: Pointer,
     },
-    /// The human sent an item back. `after_drill_down` is the
-    /// anti-rubber-stamping signal: did they open the evidence original first?
+    /// Historical only: the human sending an item back, removed from the domain
+    /// on 2026-08-02. Nothing writes this anymore — it stays so goals recorded
+    /// before then still deserialize, with their whole event log intact (that
+    /// log is the core bet's readout; dropping the variant would throw away the
+    /// very drill-down pairs it exists to count). `verdict` reads back as
+    /// `open` via the alias on ItemStatus.
     Ruling {
         item_id: ItemId,
         verdict: ItemStatus,
         after_drill_down: bool,
     },
-    /// The human opted one item out, or put it back in scope.
+    /// The human took an item out of the contract. Carries the claim text and
+    /// the version because the item is *gone*: afterwards the id names nothing,
+    /// and `items_since` cannot report a row that no longer exists — so this
+    /// event is the only way a running agent can be told to stop working on it
+    /// (see [`Goal::deletions_since`]).
+    ItemDeleted {
+        item_id: ItemId,
+        claim: String,
+        version_after: Version,
+    },
+    /// Historical only: the human opting one item out, replaced by deletion on
+    /// 2026-08-02. Kept so goals written before then still deserialize.
     Waiver {
         item_id: ItemId,
         waived: bool,
@@ -253,7 +281,7 @@ pub struct Goal {
     /// Where the agent last reconciled to.
     pub agent_synced_version: Version,
     /// The version at which a HUMAN last moved the yardstick — an add, an edit,
-    /// a rejection, a waiver. NOT moved by anything the agent does.
+    /// a waiver. NOT moved by anything the agent does.
     ///
     /// It exists because `contract_version > agent_synced_version` cannot mean
     /// "the human changed something the agent hasn't read": the agent bumps the
@@ -292,6 +320,26 @@ impl Goal {
         self.items
             .iter()
             .filter(|i| i.last_edited_version > version)
+            .collect()
+    }
+
+    /// The other half of the delta: what was taken OUT of the contract since
+    /// `version`. A deleted item cannot show up in [`Self::items_since`] — the
+    /// row is gone — so without this a running agent would keep producing
+    /// evidence for a criterion nobody holds anymore, and only find out by
+    /// hitting `ItemNotFound`. Read off the event log, which is why
+    /// `ItemDeleted` carries the claim text and the version it happened at.
+    pub fn deletions_since(&self, version: Version) -> Vec<&str> {
+        self.events
+            .iter()
+            .filter_map(|e| match &e.kind {
+                EventKind::ItemDeleted {
+                    claim,
+                    version_after,
+                    ..
+                } if *version_after > version => Some(claim.as_str()),
+                _ => None,
+            })
             .collect()
     }
 

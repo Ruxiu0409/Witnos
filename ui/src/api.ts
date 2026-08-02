@@ -95,27 +95,23 @@ export const addItem = (
   viewingEvidence: string | null,
 ) => invoke("add_item", { goalId, claim, check, viewingEvidence });
 
+// The whole of disagreement. There is no approve and no send-back: the agent's
+// work is presumed correct, so the human only ever acts to move the yardstick —
+// and re-saving an item, even unchanged, reopens it and bumps the contract
+// version, so it reaches a running agent through the delivery channel too.
+// `afterDrillDown` records whether they opened an evidence original first.
 export const editItem = (
   goalId: string,
   itemId: string,
   claim: string,
   check: string,
-) => invoke("edit_item", { goalId, itemId, claim, check });
-
-// "Your evidence doesn't pass" — the criterion stays. There is no approve
-// counterpart: the agent's work is presumed correct, so the human only ever
-// has to act when they disagree. This bumps the contract version, so it
-// reaches a running agent through the delivery channel too.
-export const rejectItem = (
-  goalId: string,
-  itemId: string,
   afterDrillDown: boolean,
-) => invoke("reject_item", { goalId, itemId, afterDrillDown });
+) => invoke("edit_item", { goalId, itemId, claim, check, afterDrillDown });
 
-// "Don't check this at all" — the gate ignores a waived item. Toggling it
-// back returns the item to `open`.
-export const waiveItem = (goalId: string, itemId: string, waived: boolean) =>
-  invoke("waive_item", { goalId, itemId, waived });
+// "Don't check this at all" — the item leaves the contract, its evidence with
+// it. Irreversible, which is why the card asks twice before calling this.
+export const deleteItem = (goalId: string, itemId: string) =>
+  invoke("delete_item", { goalId, itemId });
 
 // Type the change into the pane the agent runs in, so it lands now instead of
 // at the agent's next stop. "sent" = a program owns that pane and the line went

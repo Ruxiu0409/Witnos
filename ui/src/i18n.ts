@@ -57,13 +57,14 @@ const GOAL_STATUS_ZH: Record<string, string> = {
   closed: "已關閉",
 };
 
-// No `approved` either, for the same reason; App.tsx folds it too, since the
-// status string drives filters and CSS classes and not just this label.
+// No `approved` either, for the same reason — nor `rejected`, which left with
+// send-back (2026-08-02): an edit already reopens the item and reaches the
+// agent, so there was no state an edit didn't reach. App.tsx folds both, since
+// the status string drives filters and CSS classes and not just this label.
 const ITEM_STATUS_EN: Record<string, string> = {
   open: "open",
   laid: "evidence laid",
   passed: "passed (oracle)",
-  rejected: "sent back",
   waived: "waived",
 };
 
@@ -71,7 +72,6 @@ const ITEM_STATUS_ZH: Record<string, string> = {
   open: "待驗證",
   laid: "已擺出證據",
   passed: "已通過（oracle）",
-  rejected: "已退回",
   waived: "已豁免",
 };
 
@@ -162,7 +162,7 @@ const en = {
   endedBanner:
     "This goal's agent session has ended — closing a terminal, /clear, or quitting Witnos all start a new session, and a session never comes back. No agent reads this contract anymore: you can still edit and waive items, but to change the outcome, re-issue the goal.",
   needsBanner: (n: number) =>
-    `${n} subjective item${n > 1 ? "s" : ""} laid evidence for you to look at. The agent moved on and is not waiting — if you disagree, edit the item or send it back.`,
+    `${n} subjective item${n > 1 ? "s" : ""} laid evidence for you to look at. The agent moved on and is not waiting — if you disagree, edit the item; saving reopens it and the agent gets your change.`,
   needsBannerEnded: (n: number) =>
     `${n} subjective item${n > 1 ? "s" : ""} laid evidence for you to look at. Its session has ended, so nothing goes back to the agent — read it, and re-issue the goal if you disagree.`,
 
@@ -201,14 +201,12 @@ const en = {
   stale: "stale",
   staleTitle: "The criterion was edited after this evidence was captured.",
   provTitle: "open the original (recorded as a drill-down)",
-  sendItBack: "send it back",
-  sendItBackTitle:
-    "Keeps the criterion, tells the agent its evidence doesn't pass. An agent still running hears it too, without being interrupted.",
-  waive: "don't check this",
-  waiveTitle:
-    "Waive this item: nobody checks it. The agent is no longer asked for evidence, and the gate ignores it.",
-  unwaive: "check this again",
-  waivedNote: "waived — nobody checks this one.",
+  deleteItem: "delete this item",
+  deleteItemTitle:
+    "Take this criterion out of the contract, with its evidence. Nobody checks it, the gate ignores it, and a running agent is told to stop. This cannot be undone.",
+  confirmDeleteItem: "delete for good",
+  // Only reachable on a goal recorded before deletion replaced waiving.
+  waivedNote: "waived — nobody checks this one. (Waiving is now deletion.)",
 
   // add item
   addItemHeading: "add a verification item",
@@ -287,7 +285,7 @@ const zhHant: Messages = {
   endedBanner:
     "這個目標的 agent session 已經結束——關掉終端機、/clear、或結束 Witnos，都會開始新的 session，而舊的 session 不會回來。不會再有代理讀取這份契約：你仍然可以編輯或豁免項目，但要改變結果，請重新發布這個目標。",
   needsBanner: (n) =>
-    `${n} 個主觀項目擺好了證據等你看。代理擺完就繼續前進，不會等你——你不同意的話，就編輯這個項目或把它退回。`,
+    `${n} 個主觀項目擺好了證據等你看。代理擺完就繼續前進，不會等你——你不同意的話就編輯這個項目，一存檔它就重新開啟，代理也會收到你的修改。`,
   needsBannerEnded: (n) =>
     `${n} 個主觀項目擺好了證據等你看。它的 session 已經結束，任何東西都送不回代理了——看完之後若你不同意，請重新發布這個目標。`,
 
@@ -321,14 +319,11 @@ const zhHant: Messages = {
   stale: "過時",
   staleTitle: "這項驗收條件在證據擷取之後被修改過。",
   provTitle: "開啟原始出處（會記錄為一次下鑽）",
-  sendItBack: "退回給代理",
-  sendItBackTitle:
-    "保留這項條件，但告訴代理它的證據不算通過。還在跑的代理也收得到，而且不會被打斷。",
-  waive: "不檢查這項",
-  waiveTitle:
-    "豁免這一項：沒有人會檢查它。不再要求代理提供證據，gate 也會忽略它。",
-  unwaive: "恢復檢查",
-  waivedNote: "已豁免——沒有人會檢查這一項。",
+  deleteItem: "刪除這一項",
+  deleteItemTitle:
+    "把這條驗收條件連同它的證據移出契約：沒有人會檢查它，gate 會忽略它，還在跑的代理也會被告知停手。無法復原。",
+  confirmDeleteItem: "確認刪除",
+  waivedNote: "已豁免——沒有人會檢查這一項。（現在「不檢查」已改為直接刪除。）",
 
   // add item
   addItemHeading: "新增驗證項目",

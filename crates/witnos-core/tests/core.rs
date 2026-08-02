@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use serde_json::json;
+
 use witnos_core::*;
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -132,7 +134,7 @@ fn subjective_needs_interpretation_before_it_counts_as_laid() {
 }
 
 #[test]
-fn full_loop_release_block_and_rejection() {
+fn full_loop_release_block_and_disagreement() {
     let (store, _dir) = temp_store();
     let goal = store.create_goal("demo").unwrap();
 
@@ -173,10 +175,9 @@ fn full_loop_release_block_and_rejection() {
         .edit_item(
             &goal.id,
             subj,
-            Some("UI feels calm (and NO animation at all)".into()),
-            None,
-            None,
+            ItemEdit::claim("UI feels calm (and NO animation at all)"),
             Actor::Human,
+            false,
         )
         .unwrap();
     let out = evaluate(&store.get_goal(&goal.id).unwrap());
@@ -201,21 +202,49 @@ fn full_loop_release_block_and_rejection() {
         GoalStatus::AwaitingRulings
     );
 
-    // The human sends the item back. That is a move on the yardstick, so the
-    // version bumps and the item lands in the delta the delivery channel
-    // computes from what the agent had already seen — a running agent hears
-    // about it, instead of the news waiting at the gate.
+    // The human disagrees with a parked goal. Send-back is gone (2026-08-02),
+    // so this is an edit — and the interesting case is the one send-back used to
+    // own: the claim text is UNCHANGED, the human just doesn't accept the
+    // evidence. Re-saving must still reopen the item, move the version, and put
+    // it in the delta the delivery channel computes from what the agent had
+    // already seen — a running agent hears about it, instead of the news waiting
+    // at the gate. `after_drill_down: true` = they opened the original first.
     let seen = store.get_goal(&goal.id).unwrap().contract_version;
-    store.reject_item(&goal.id, subj, true).unwrap();
+    let same_claim = store.get_goal(&goal.id).unwrap().item(subj).unwrap().claim.clone();
+    store
+        .edit_item(
+            &goal.id,
+            subj,
+            ItemEdit::claim(same_claim),
+            Actor::Human,
+            true,
+        )
+        .unwrap();
     let g = store.get_goal(&goal.id).unwrap();
-    assert_eq!(g.contract_version, seen + 1, "a rejection moves the yardstick");
+    assert_eq!(g.contract_version, seen + 1, "disagreement moves the yardstick");
+    assert_eq!(g.item(subj).unwrap().status, ItemStatus::Open);
     assert_eq!(g.item(subj).unwrap().last_edited_version, g.contract_version);
     assert!(
         g.items_since(seen).iter().any(|i| i.id == *subj),
-        "the rejection must be in the delta"
+        "the disagreement must be in the delta"
     );
     let out = evaluate(&g);
-    assert!(out.reasons.iter().any(|r| r.contains("rejected")));
+    assert!(out.reasons.iter().any(|r| r.contains("not laid")));
+    // The anti-rubber-stamping signal survived send-back's removal: it rides on
+    // the edit now, and it is what the core bet is read out of.
+    assert!(
+        g.events.iter().any(|e| matches!(
+            &e.kind,
+            EventKind::ContractEdited {
+                item_id,
+                by: Actor::Human,
+                after_drill_down: true,
+                ..
+            } if item_id == subj
+        )),
+        "the drill-down must be stamped on the edit: {:?}",
+        g.events
+    );
 
     // Fresh evidence re-lays it; reconciling to the new version releases again.
     store.add_evidence(&goal.id, subj, some_evidence()).unwrap();
@@ -234,7 +263,7 @@ fn full_loop_release_block_and_rejection() {
 }
 
 #[test]
-fn agent_must_not_edit_human_items_and_rulings_are_subjective_only() {
+fn agent_must_not_edit_human_items() {
     let (store, _dir) = temp_store();
     let goal = store.create_goal("demo").unwrap();
     let ids = store
@@ -249,13 +278,17 @@ fn agent_must_not_edit_human_items_and_rulings_are_subjective_only() {
         .unwrap();
 
     let err = store
-        .edit_item(&goal.id, &ids[0], Some("weaker bar".into()), None, None, Actor::Agent)
+        .edit_item(
+            &goal.id,
+            &ids[0],
+            ItemEdit::claim("weaker bar"),
+            Actor::Agent,
+            false,
+        )
         .unwrap_err();
     assert!(matches!(err, StoreError::Invalid(_)));
-
-    let err = store.reject_item(&goal.id, &ids[1], false).unwrap_err();
-    assert!(matches!(err, StoreError::Invalid(_)));
-    // A refused ruling must not have moved the contract version either.
+    // The version is bumped before validation (`mutate` works on a draft), so a
+    // refused write must leave it exactly where it was.
     assert_eq!(store.get_goal(&goal.id).unwrap().contract_version, 2);
 
     let err = store.report_oracle(&goal.id, &ids[0], true).unwrap_err();
@@ -513,7 +546,7 @@ fn registry_round_trips_and_canonicalizes() {
 }
 
 /// A goal stays parked in `AwaitingRulings` after release: the human may still
-/// send items back, so "you can still intervene" never stops being true.
+/// move the yardstick, so "you can still intervene" never stops being true.
 #[test]
 fn a_released_goal_parks_awaiting_rulings_and_stays_there() {
     let (store, _dir) = temp_store();
@@ -538,12 +571,14 @@ fn a_released_goal_parks_awaiting_rulings_and_stays_there() {
     let status = |s: &Store| s.get_goal(&goal.id).unwrap().status;
     assert_eq!(status(&store), GoalStatus::AwaitingRulings);
 
-    // Sending one back does not change the parked state — only the item's.
-    store.reject_item(&goal.id, &ids[0], false).unwrap();
+    // Editing one does not change the parked state — only the item's.
+    store
+        .edit_item(&goal.id, &ids[0], ItemEdit::default(), Actor::Human, false)
+        .unwrap();
     assert_eq!(status(&store), GoalStatus::AwaitingRulings);
     assert_eq!(
         store.get_goal(&goal.id).unwrap().item(&ids[0]).unwrap().status,
-        ItemStatus::Rejected
+        ItemStatus::Open
     );
 }
 
@@ -589,11 +624,142 @@ fn legacy_ruled_and_approved_statuses_still_load() {
     assert!(evaluate(&g).release, "{:?}", evaluate(&g).reasons);
 }
 
-/// Per-item opt-out: the gate neither blocks on a waived item nor demands
-/// evidence for it, and putting it back in scope makes it live again.
+/// The same back-compat problem one removal later: goals written while
+/// send-back existed carry `rejected` items and `ruling` events. Both must load
+/// — the item as `open`, which is what a sent-back item always was underneath
+/// (re-address it with fresh evidence), and the event verbatim, because that log
+/// is the core bet's readout and dropping the variant would throw away the very
+/// drill-down pairs it exists to count.
 #[test]
-fn the_gate_ignores_a_waived_item() {
+fn legacy_rejected_items_and_ruling_events_still_load() {
+    let (store, dir) = temp_store();
+    let goal = store.create_goal("demo").unwrap();
+    let ids = store
+        .lay_items(
+            &goal.id,
+            vec![subjective("calm UI", Origin::AgentInitial)],
+            Actor::Agent,
+        )
+        .unwrap();
+    store
+        .set_interpretation(&goal.id, &ids[0], "calm = no motion")
+        .unwrap();
+    store.add_evidence(&goal.id, &ids[0], some_evidence()).unwrap();
+
+    // Rewrite the file the way the old domain would have left it: the item sent
+    // back, and the ruling that did it sitting in the event log.
+    let path = dir.join(format!("{}.json", goal.id));
+    let mut v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    v["items"][0]["status"] = json!("rejected");
+    v["events"].as_array_mut().unwrap().push(json!({
+        "at": 1_700_000_000_u64,
+        "kind": "ruling",
+        "item_id": ids[0],
+        "verdict": "rejected",
+        "after_drill_down": true,
+    }));
+    std::fs::write(&path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+
+    drop(store);
+    let store = Store::open(&dir).unwrap();
+    let g = store.get_goal(&goal.id).unwrap();
+    assert_eq!(g.item(&ids[0]).unwrap().status, ItemStatus::Open);
+    assert!(
+        g.events.iter().any(|e| matches!(
+            &e.kind,
+            EventKind::Ruling { after_drill_down: true, .. }
+        )),
+        "the historical ruling must survive the read: {:?}",
+        g.events
+    );
+    // And it reads as unfinished work, exactly as a sent-back item did.
+    let out = evaluate(&g);
+    assert!(!out.release);
+    assert!(out.reasons.iter().any(|r| r.contains("not laid")));
+}
+
+/// Per-item opt-out, which is a deletion since 2026-08-02: the criterion and
+/// its evidence leave the contract, the gate stops mentioning it, and — because
+/// a row that no longer exists cannot be in `items_since` — the removal reaches
+/// a running agent through `deletions_since` instead.
+#[test]
+fn deleting_an_item_takes_it_out_of_the_contract_and_tells_the_agent() {
     let (store, _dir) = temp_store();
+    let goal = store.create_goal("demo").unwrap();
+    let ids = store
+        .lay_items(
+            &goal.id,
+            vec![
+                subjective("the part the user cares about", Origin::UserPreRun),
+                subjective("the part they don't", Origin::UserPreRun),
+            ],
+            Actor::Human,
+        )
+        .unwrap();
+    store.set_interpretation(&goal.id, &ids[0], "how I read it").unwrap();
+    store.add_evidence(&goal.id, &ids[0], some_evidence()).unwrap();
+    store.set_interpretation(&goal.id, &ids[1], "how I read it").unwrap();
+    store.add_evidence(&goal.id, &ids[1], some_evidence()).unwrap();
+    store.reconcile(&goal.id, "s", 2, vec![]).unwrap();
+    assert_eq!(store.get_goal(&goal.id).unwrap().evidence.len(), 2);
+
+    // Now the human edits the second one, so it is outstanding again…
+    store
+        .edit_item(&goal.id, &ids[1], ItemEdit::default(), Actor::Human, false)
+        .unwrap();
+    let out = evaluate(&store.get_goal(&goal.id).unwrap());
+    assert!(out.reasons.iter().any(|r| r.contains("the part they don't")));
+
+    // …and then decides it should not be checked at all.
+    store.delete_item(&goal.id, &ids[1]).unwrap();
+    let g = store.get_goal(&goal.id).unwrap();
+    assert!(g.item(&ids[1]).is_none(), "the item is gone");
+    assert_eq!(
+        g.evidence.len(),
+        1,
+        "its evidence goes with it — evidence for a criterion nobody holds is dead weight"
+    );
+    let out = evaluate(&g);
+    assert!(
+        !out.reasons.iter().any(|r| r.contains("the part they don't")),
+        "a deleted item must not be mentioned at all: {:?}",
+        out.reasons
+    );
+
+    // It IS news for a running agent — otherwise it keeps producing evidence
+    // nobody will read. `items_since` cannot carry it (the row is gone), which
+    // is exactly why the deletion channel exists.
+    assert_eq!(g.contract_version, 4);
+    assert_eq!(g.last_human_edit_version, 4);
+    assert!(
+        g.items_since(3).is_empty(),
+        "nothing surviving changed at v4: {:?}",
+        g.items_since(3)
+    );
+    assert_eq!(g.deletions_since(3), vec!["the part they don't"]);
+    assert!(g.deletions_since(4).is_empty(), "not news twice");
+
+    // The one round the bump costs: reconcile, and nothing else is outstanding.
+    assert_eq!(out.reasons.len(), 1, "{:?}", out.reasons);
+    assert!(out.reasons[0].contains("contract moved"), "{:?}", out.reasons);
+    store.reconcile(&goal.id, "s", 4, vec![]).unwrap();
+    assert!(evaluate(&store.get_goal(&goal.id).unwrap()).release);
+
+    // An unknown id is an error that moves nothing — the version is bumped
+    // before the lookup (`mutate` works on a draft), so this is worth pinning.
+    let err = store.delete_item(&goal.id, "no-such-item").unwrap_err();
+    assert!(matches!(err, StoreError::ItemNotFound(_)), "got: {err}");
+    assert_eq!(store.get_goal(&goal.id).unwrap().contract_version, 4);
+}
+
+/// Goals written before deletion replaced waiving still carry waived items, and
+/// the gate must go on ignoring them. Aliasing `waived` onto `open` would
+/// silently re-arm a check its owner had already opted out of — the one thing
+/// loading an old file must never do.
+#[test]
+fn legacy_waived_items_are_still_skipped_by_the_gate() {
+    let (store, dir) = temp_store();
     let goal = store.create_goal("demo").unwrap();
     let ids = store
         .lay_items(
@@ -609,70 +775,35 @@ fn the_gate_ignores_a_waived_item() {
     store.add_evidence(&goal.id, &ids[0], some_evidence()).unwrap();
     store.reconcile(&goal.id, "s", 2, vec![]).unwrap();
 
-    let out = evaluate(&store.get_goal(&goal.id).unwrap());
-    assert!(!out.release);
-    assert_eq!(out.reasons.len(), 1, "{:?}", out.reasons);
+    // Rewrite the file the way the old domain would have left it.
+    let path = dir.join(format!("{}.json", goal.id));
+    let mut v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    v["items"][1]["status"] = json!("waived");
+    v["events"].as_array_mut().unwrap().push(json!({
+        "at": 1_700_000_000_u64,
+        "kind": "waiver",
+        "item_id": ids[1],
+        "waived": true,
+    }));
+    std::fs::write(&path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
 
-    // Waived: the item stops existing as far as the gate is concerned…
-    store.waive_item(&goal.id, &ids[1], true).unwrap();
+    drop(store);
+    let store = Store::open(&dir).unwrap();
     let g = store.get_goal(&goal.id).unwrap();
     assert_eq!(g.item(&ids[1]).unwrap().status, ItemStatus::Waived);
-    let out = evaluate(&g);
     assert!(
-        !out.reasons.iter().any(|r| r.contains("the part they don't")),
-        "a waived item must not be mentioned at all: {:?}",
-        out.reasons
+        g.events
+            .iter()
+            .any(|e| matches!(e.kind, EventKind::Waiver { .. })),
+        "the historical waiver must survive the read"
     );
-    // …but it IS news for a running agent — otherwise it keeps producing
-    // evidence nobody will read — so it moves the yardstick like an edit and
-    // lands in the delta the delivery channel computes.
-    assert_eq!(g.contract_version, 3);
-    assert_eq!(g.last_human_edit_version, 3);
-    assert_eq!(g.item(&ids[1]).unwrap().last_edited_version, 3);
-    let delta = g.items_since(2);
-    assert_eq!(delta.len(), 1, "only the waived item changed");
-    assert_eq!(delta[0].id, ids[1]);
-    // The one round the bump costs: reconcile, and nothing else is outstanding.
-    assert_eq!(out.reasons.len(), 1, "{:?}", out.reasons);
-    assert!(out.reasons[0].contains("contract moved"), "{:?}", out.reasons);
-    store.reconcile(&goal.id, "s", 3, vec![]).unwrap();
-    let out = evaluate(&store.get_goal(&goal.id).unwrap());
-    assert!(out.release, "{:?}", out.reasons);
-
-    // Idempotent (a double-clicked toggle is not an error), and a no-op must
-    // not creep the version — that would stall the gate for nothing.
-    store.waive_item(&goal.id, &ids[1], true).unwrap();
-    assert_eq!(store.get_goal(&goal.id).unwrap().contract_version, 3);
-
-    // …and un-waiving puts it back in scope, equally as news.
-    store.waive_item(&goal.id, &ids[1], false).unwrap();
-    let g = store.get_goal(&goal.id).unwrap();
-    assert_eq!(g.item(&ids[1]).unwrap().status, ItemStatus::Open);
-    assert_eq!(g.contract_version, 4);
-    assert_eq!(g.item(&ids[1]).unwrap().last_edited_version, 4);
-    assert!(g.items_since(3).iter().any(|i| i.id == ids[1]));
     let out = evaluate(&g);
-    assert!(!out.release);
-    assert!(
-        out.reasons.iter().any(|r| r.contains("the part they don't")),
-        "back in scope means back to being blocked on: {:?}",
-        out.reasons
-    );
+    assert!(out.release, "the opted-out item must stay opted out: {:?}", out.reasons);
 
-    // Un-waiving something that was never waived must not reset laid work, and
-    // must not move the version either.
-    store.waive_item(&goal.id, &ids[0], false).unwrap();
-    let g = store.get_goal(&goal.id).unwrap();
-    assert_eq!(g.item(&ids[0]).unwrap().status, ItemStatus::Laid);
-    assert_eq!(g.contract_version, 4);
-
-    // Both directions are on the record (the human's own trail).
-    let waivers = g
-        .events
-        .iter()
-        .filter(|e| matches!(e.kind, EventKind::Waiver { .. }))
-        .count();
-    assert_eq!(waivers, 2, "one waive, one un-waive");
+    // And the lever that replaced it still works on such an item.
+    store.delete_item(&goal.id, &ids[1]).unwrap();
+    assert!(store.get_goal(&goal.id).unwrap().item(&ids[1]).is_none());
 }
 
 /// Fix 2's whole point: the UI's "the agent hasn't seen your change" signal must
@@ -708,10 +839,9 @@ fn only_human_moves_bump_last_human_edit_version() {
         .edit_item(
             &goal.id,
             &agent_ids[0],
-            Some("calm UI, no motion".into()),
-            None,
-            None,
+            ItemEdit::claim("calm UI, no motion"),
             Actor::Agent,
+            false,
         )
         .unwrap();
     assert_eq!(seen(&store), (3, 0));
@@ -746,23 +876,23 @@ fn only_human_moves_bump_last_human_edit_version() {
         .edit_item(
             &goal.id,
             &mine[0],
-            Some("nothing shifts on hover, anywhere".into()),
-            None,
-            None,
+            ItemEdit::claim("nothing shifts on hover, anywhere"),
             Actor::Human,
+            false,
         )
         .unwrap();
     assert_eq!(seen(&store), (5, 5));
 
-    // Sending an item back: news (the agent has to re-address it).
-    store.reject_item(&goal.id, &agent_ids[0], true).unwrap();
+    // Re-saving an agent's item unchanged: news too. This is disagreement now
+    // that send-back is gone — the agent has to re-address it.
+    store
+        .edit_item(&goal.id, &agent_ids[0], ItemEdit::default(), Actor::Human, true)
+        .unwrap();
     assert_eq!(seen(&store), (6, 6));
 
-    // Waiving one: news too (stop working on it), both directions.
-    store.waive_item(&goal.id, &mine[0], true).unwrap();
+    // Deleting one: news too (stop working on it).
+    store.delete_item(&goal.id, &agent_ids[1]).unwrap();
     assert_eq!(seen(&store), (7, 7));
-    store.waive_item(&goal.id, &mine[0], false).unwrap();
-    assert_eq!(seen(&store), (8, 8));
 
     // A rejected write must leave neither number moved (`mutate` discards the
     // draft) — an agent cannot make the UI claim the human edited something.
@@ -770,18 +900,17 @@ fn only_human_moves_bump_last_human_edit_version() {
         .edit_item(
             &goal.id,
             &mine[0],
-            Some("agents must not touch this".into()),
-            None,
-            None,
+            ItemEdit::claim("agents must not touch this"),
             Actor::Agent,
+            false,
         )
         .unwrap_err();
-    assert_eq!(seen(&store), (8, 8));
+    assert_eq!(seen(&store), (7, 7));
 
     // Durable: it is what the UI reads on next open, not a live-only flag.
     drop(store);
     let store = Store::open(&dir).unwrap();
-    assert_eq!(seen(&store), (8, 8));
+    assert_eq!(seen(&store), (7, 7));
 }
 
 /// The pane a session's shell runs in is durable and never clobbered: it is the

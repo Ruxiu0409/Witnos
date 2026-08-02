@@ -32,13 +32,17 @@ function short(id: string): string {
   return id.slice(0, 8);
 }
 
-// Approval left the domain (it was mechanically inert — the gate treated
-// "laid" and "approved" identically). The core already aliases the stored
-// `approved` onto `laid` as it reads a goal, so this is the belt to that
-// braces: the status string also becomes a CSS class and a filter key here, and
-// an unknown one must not fan out into three silently wrong renderings.
+// Two states left the domain: approval (mechanically inert — the gate treated
+// "laid" and "approved" identically) and send-back (an edit already does all of
+// it, and the criterion you would keep is usually the thing worth changing). The
+// core aliases both stored values as it reads a goal — `approved`→`laid`,
+// `rejected`→`open` — so this is the belt to that braces: the status string also
+// becomes a CSS class and a filter key here, and an unknown one must not fan out
+// into three silently wrong renderings.
 function itemStatus(status: string): string {
-  return status === "approved" ? "laid" : status;
+  if (status === "approved") return "laid";
+  if (status === "rejected") return "open";
+  return status;
 }
 
 // Only macOS gets the overlaid title bar (tauri's titleBarStyle is macOS-only),
@@ -198,11 +202,17 @@ export default function App() {
   // Which evidence the user is looking at right now — the honest source of
   // the origin instrumentation (the strong-bet (b) signal).
   const [viewing, setViewing] = useState<string | null>(null);
-  // Items whose evidence originals were opened this session (per-ruling flag).
+  // Items whose evidence originals were opened this session. Stamped onto the
+  // edit that follows — the anti-rubber-stamping half of the drill-down log.
   const drilled = useRef<Set<string>>(new Set());
 
   const [newClaim, setNewClaim] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
+  // The item whose ✕ has been pressed once. Deletion is irreversible and takes
+  // the evidence with it, so the button asks in place rather than firing — the
+  // same two-step the sidebar's destructive actions use, without a modal for a
+  // decision this small.
+  const [deleting, setDeleting] = useState<string | null>(null);
   const [editClaim, setEditClaim] = useState("");
   const [editCheck, setEditCheck] = useState("");
 
@@ -261,17 +271,18 @@ export default function App() {
   }, [refresh]);
 
   useEffect(() => {
-    if (!menu && !confirmBox && workspaceView !== "settings") return;
+    if (!menu && !confirmBox && !deleting && workspaceView !== "settings") return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setMenu(null);
         setConfirmBox(null);
+        setDeleting(null);
         setWorkspaceView("terminal");
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [menu, confirmBox, workspaceView]);
+  }, [menu, confirmBox, deleting, workspaceView]);
 
   useEffect(() => {
     document.documentElement.lang = lang;
@@ -506,30 +517,34 @@ export default function App() {
     refresh();
   };
 
+  // The way to disagree. It bumps the contract version, so it reaches a running
+  // agent through the delivery channel — and a failure has to say so, otherwise
+  // the click just looks like it did nothing. `drilled` carries the
+  // anti-rubber-stamping signal: did they open an evidence original first?
   const saveEdit = async (itemId: string) => {
     if (!goal) return;
-    await api.editItem(goal.id, itemId, editClaim, editCheck);
-    setEditing(null);
-    refresh();
-  };
-
-  // The two ways to disagree. Both bump the contract version, so both reach a
-  // running agent through the delivery channel — and a failure has to say so,
-  // otherwise the click just looks like it did nothing.
-  const sendItemBack = async (item: api.Item) => {
-    if (!goal) return;
     try {
-      await api.rejectItem(goal.id, item.id, drilled.current.has(item.id));
+      await api.editItem(
+        goal.id,
+        itemId,
+        editClaim,
+        editCheck,
+        drilled.current.has(itemId),
+      );
+      setEditing(null);
       refresh();
     } catch (e) {
       failed(e);
     }
   };
 
-  const setWaived = async (item: api.Item, waived: boolean) => {
+  // The other lever: take the criterion out of the contract entirely. Only
+  // reachable from the second press of ✕.
+  const deleteItem = async (item: api.Item) => {
     if (!goal) return;
+    setDeleting(null);
     try {
-      await api.waiveItem(goal.id, item.id, waived);
+      await api.deleteItem(goal.id, item.id);
       refresh();
     } catch (e) {
       failed(e);
@@ -1169,6 +1184,9 @@ export default function App() {
                       const reinterpreted =
                         item.interpretation_history.length > 1;
                       const st = itemStatus(item.status);
+                      // Only a goal recorded before deletion replaced waiving
+                      // can still hold one. Nothing produces it now, and the
+                      // levers below treat it like any other item.
                       const waived = st === "waived";
                       return (
                         <article
@@ -1205,17 +1223,27 @@ export default function App() {
                               {t.originKind(item.origin.kind)}
                             </span>
                             <span className="spacer" />
-                            {/* A waived item offers only the way back: editing
-                                a criterion nobody checks is busywork. */}
+                            {/* Both levers the human has, next to the state
+                                they act on. ✕ asks in place before it deletes:
+                                the item and its evidence go, and nothing brings
+                                them back. */}
                             {goal.status !== "closed" &&
                               editing !== item.id &&
-                              (waived ? (
-                                <button
-                                  className="ghost"
-                                  onClick={() => setWaived(item, false)}
-                                >
-                                  {t.unwaive}
-                                </button>
+                              (deleting === item.id ? (
+                                <>
+                                  <button
+                                    className="danger"
+                                    onClick={() => deleteItem(item)}
+                                  >
+                                    {t.confirmDeleteItem}
+                                  </button>
+                                  <button
+                                    className="ghost"
+                                    onClick={() => setDeleting(null)}
+                                  >
+                                    {t.cancel}
+                                  </button>
+                                </>
                               ) : (
                                 <>
                                   <button
@@ -1230,9 +1258,9 @@ export default function App() {
                                   </button>
                                   <button
                                     className="ghost icon"
-                                    title={t.waiveTitle}
-                                    aria-label={t.waive}
-                                    onClick={() => setWaived(item, true)}
+                                    title={t.deleteItemTitle}
+                                    aria-label={t.deleteItem}
+                                    onClick={() => setDeleting(item.id)}
                                   >
                                     <Icon name="x" size={12} />
                                   </button>
@@ -1340,33 +1368,19 @@ export default function App() {
                             );
                           })}
 
-                          {/* No approve button: the agent's work is presumed
-                              correct, so the human only acts on disagreement.
-                              The line of prose that used to sit above this
-                              button — "the agent isn't waiting for you" — is
-                              gone: the goal's own banner says it once, and
-                              repeating it under every subjective item is the
-                              reading load principle 4 exists to cut.
-                              Gone with the session, too: sending an item back
-                              does its whole work at a stop that will never come,
-                              so offering it would be theatre. Edit and waive
-                              stay — the contract is still worth curating, not
-                              least when re-issuing the goal is the next move. */}
-                          {item.class.kind === "subjective" &&
-                            ["laid", "rejected"].includes(st) &&
-                            goal.status !== "closed" &&
-                            !ended && (
-                              <div className="ruling">
-                                <button
-                                  className={`reject ${st === "rejected" ? "active" : ""}`}
-                                  title={t.sendItBackTitle}
-                                  onClick={() => sendItemBack(item)}
-                                >
-                                  <Icon name="corner-up-left" size={12} />{" "}
-                                  {t.sendItBack}
-                                </button>
-                              </div>
-                            )}
+                          {/* No verdict row at all. There is no approve — the
+                              agent's work is presumed correct, so the human only
+                              acts on disagreement — and no send-back either: it
+                              kept the criterion and argued with the evidence,
+                              which an edit does anyway (re-saving reopens the
+                              item, bumps the version, and reaches the agent the
+                              same way), and the criterion you would have kept is
+                              usually the thing actually worth changing. Two
+                              levers remain, both in the header: edit the
+                              yardstick, or delete the item.
+                              The note below can only appear on a goal recorded
+                              before deletion replaced waiving — it explains a
+                              state nothing reaches anymore. */}
                           {waived && (
                             <div className="waived-note">{t.waivedNote}</div>
                           )}

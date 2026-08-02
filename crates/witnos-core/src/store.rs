@@ -68,6 +68,30 @@ pub struct NewItem {
     pub origin: Origin,
 }
 
+/// What an edit changes. Every field is optional: `None` leaves it alone, and
+/// all-`None` is a meaningful call — re-saving an item unchanged is how the
+/// human says "this isn't answered", now that send-back is gone. See
+/// [`Store::edit_item`].
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ItemEdit {
+    #[serde(default)]
+    pub claim: Option<String>,
+    #[serde(default)]
+    pub check: Option<String>,
+    #[serde(default)]
+    pub class: Option<Class>,
+}
+
+impl ItemEdit {
+    /// The claim-only edit, which is all the UI's edit form can produce.
+    pub fn claim(claim: impl Into<String>) -> Self {
+        Self {
+            claim: Some(claim.into()),
+            ..Self::default()
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct NewEvidence {
     pub conclusion: String,
@@ -285,6 +309,10 @@ impl Store {
                         item_id: id.clone(),
                         by: actor,
                         version_after: v,
+                        // A new item carries its drill-down provenance in
+                        // `origin` (UserViewingEvidence) instead — richer,
+                        // since it names which evidence triggered it.
+                        after_drill_down: false,
                     },
                 });
                 ids.push(id);
@@ -296,14 +324,21 @@ impl Store {
     /// Human (or agent, on its own items only) edits an item's yardstick.
     /// Any such edit reopens the item: prior evidence/passes were against the
     /// old yardstick.
+    ///
+    /// This is the whole of disagreement now that send-back is gone (2026-08-02):
+    /// re-saving an item — even with the same words — reopens it, bumps the
+    /// version, and therefore reaches a still-running agent through the delivery
+    /// channel, which is everything a rejection did. `after_drill_down` records
+    /// whether the human opened an evidence original before moving the
+    /// yardstick; it used to hang off the ruling, and it is the anti-rubber-
+    /// stamping signal (principle 6). Agents pass false.
     pub fn edit_item(
         &self,
         goal_id: &str,
         item_id: &str,
-        claim: Option<String>,
-        check: Option<String>,
-        class: Option<Class>,
+        edit: ItemEdit,
         actor: Actor,
+        after_drill_down: bool,
     ) -> Result<(), StoreError> {
         self.mutate(goal_id, |goal| {
             goal.contract_version += 1;
@@ -315,14 +350,14 @@ impl Store {
                         .into(),
                 ));
             }
-            if let Some(c) = class {
+            if let Some(c) = edit.class {
                 validate_class(&c, actor)?;
                 item.class = c;
             }
-            if let Some(c) = claim {
+            if let Some(c) = edit.claim {
                 item.claim = c;
             }
-            if let Some(c) = check {
+            if let Some(c) = edit.check {
                 item.check = c;
             }
             item.status = ItemStatus::Open;
@@ -339,6 +374,7 @@ impl Store {
                     item_id: id,
                     by: actor,
                     version_after: v,
+                    after_drill_down,
                 },
             });
             Ok(())
@@ -383,12 +419,12 @@ impl Store {
             let item = find_item(&mut goal.items, item_id)?;
             let id = new_id();
             item.evidence_ids.push(id.clone());
-            // Laying evidence moves an open/rejected subjective item to Laid,
-            // provided an interpretation exists. Objective items pass only
-            // via report_oracle; a waived item stays waived — only the human
-            // puts it back in scope.
+            // Laying evidence moves an open subjective item to Laid, provided
+            // an interpretation exists. Objective items pass only via
+            // report_oracle; a waived item stays waived — only the human puts
+            // it back in scope.
             if matches!(item.class, Class::Subjective)
-                && matches!(item.status, ItemStatus::Open | ItemStatus::Rejected)
+                && matches!(item.status, ItemStatus::Open)
                 && item.interpretation.is_some()
             {
                 item.status = ItemStatus::Laid;
@@ -440,102 +476,47 @@ impl Store {
         })
     }
 
-    /// The human sends a subjective item back. Never callable by the agent —
-    /// the server must route agent identities away from this operation.
+    /// Per-item opt-out — `unwatch` narrowed to one item, and the human's second
+    /// lever beside editing. Human-only: an agent must never be able to excuse
+    /// itself from a check.
     ///
-    /// There is no counterpart approval: the agent's work is presumed correct,
-    /// so a rejection is a move on the yardstick, not a verdict beside it. It
-    /// therefore bumps the contract version and stamps the item exactly like an
-    /// edit — which is what puts it into the delta the delivery channel
-    /// computes, reaching an agent that is still RUNNING instead of waiting at
-    /// the gate for it to try to stop.
-    pub fn reject_item(
-        &self,
-        goal_id: &str,
-        item_id: &str,
-        after_drill_down: bool,
-    ) -> Result<(), StoreError> {
+    /// It deletes rather than waives (2026-08-02). Waiving parked the item in a
+    /// `Waived` status nobody checked; the honest gesture for a criterion you do
+    /// not want checked is to take it out of the contract, and a contract that
+    /// accumulates tombstones is the reading load principle 4 exists to cut. The
+    /// item's evidence goes with it — evidence for a criterion nobody holds is
+    /// dead weight, and the UI reaches it through the item anyway.
+    ///
+    /// Bumps both versions like an edit, for the same reason: the agent has to
+    /// hear this while it is still RUNNING or it spends the rest of the turn
+    /// producing evidence for something nobody will read. But a deleted item
+    /// cannot be in `items_since` — it is gone — so the delivery channel reads
+    /// [`Goal::deletions_since`] instead, which is why this event carries the
+    /// claim text and the version. The id would name nothing afterwards.
+    ///
+    /// The cost is honest and small: the gate holds the agent for one round
+    /// asking it to reconcile to the new version.
+    pub fn delete_item(&self, goal_id: &str, item_id: &str) -> Result<(), StoreError> {
         self.mutate(goal_id, |goal| {
-            // Bumped before validation on purpose: `mutate` works on a draft,
-            // so a rejected call discards the bump with everything else.
+            // Located before the bump does any work: `mutate` persists a draft
+            // that returns Ok, so an unknown id must not move the version.
+            let idx = goal
+                .items
+                .iter()
+                .position(|i| i.id == item_id)
+                .ok_or_else(|| StoreError::ItemNotFound(item_id.to_string()))?;
             goal.contract_version += 1;
             let v = goal.contract_version;
-            let item = find_item(&mut goal.items, item_id)?;
-            if !matches!(item.class, Class::Subjective) {
-                return Err(StoreError::Invalid(
-                    "rulings apply only to subjective items".into(),
-                ));
-            }
-            if !matches!(item.status, ItemStatus::Laid | ItemStatus::Rejected) {
-                return Err(StoreError::Invalid(
-                    "item has nothing laid out to rule on yet".into(),
-                ));
-            }
-            item.status = ItemStatus::Rejected;
-            // Freshness follows the same rule as an edit: evidence captured
-            // before the rejection no longer answers it.
-            item.last_edited_version = v;
-            let verdict = item.status;
-            let id = item.id.clone();
+            let item = goal.items.remove(idx);
+            goal.evidence.retain(|e| e.item_id != item.id);
             goal.last_human_edit_version = v;
             goal.events.push(Event {
                 at: now(),
-                kind: EventKind::Ruling {
-                    item_id: id,
-                    verdict,
-                    after_drill_down,
+                kind: EventKind::ItemDeleted {
+                    item_id: item.id,
+                    claim: item.claim,
+                    version_after: v,
                 },
-            });
-            Ok(())
-        })
-    }
-
-    /// Per-item opt-out — `unwatch` narrowed to one item. Human-only, same as
-    /// rulings: an agent must never be able to excuse itself from a check.
-    ///
-    /// Bumps the contract version and stamps the item in BOTH directions, the
-    /// same way an edit or a rejection does. Waiving takes work away, but that
-    /// is exactly why the agent has to hear it while it is still RUNNING: left
-    /// to the gate, it would spend the rest of the turn producing evidence for
-    /// something nobody will ever read. The bump is what puts the item in the
-    /// delta the delivery channel computes, and `delta_note` is what tells the
-    /// agent which side of the toggle it landed on.
-    ///
-    /// The cost is honest and small: the gate will hold the agent for one round
-    /// asking it to reconcile to the new version. Un-waiving needs that round
-    /// anyway — the item is back in scope and wants fresh evidence.
-    pub fn waive_item(
-        &self,
-        goal_id: &str,
-        item_id: &str,
-        waived: bool,
-    ) -> Result<(), StoreError> {
-        self.mutate(goal_id, |goal| {
-            // Read the current side of the toggle before touching anything: a
-            // no-op must leave the version alone, and `mutate` persists any
-            // draft that returns Ok — including one that only bumped.
-            let already = find_item(&mut goal.items, item_id)?.status == ItemStatus::Waived;
-            // Already there: a double-clicked toggle is not an error — and
-            // this guard is what keeps un-waive from resetting a laid item.
-            if already == waived {
-                return Ok(());
-            }
-            goal.contract_version += 1;
-            let v = goal.contract_version;
-            let item = find_item(&mut goal.items, item_id)?;
-            item.status = if waived {
-                ItemStatus::Waived
-            } else {
-                ItemStatus::Open
-            };
-            // Same freshness rule as an edit: on the way back in, evidence from
-            // before the waiver does not answer the item any more.
-            item.last_edited_version = v;
-            let id = item.id.clone();
-            goal.last_human_edit_version = v;
-            goal.events.push(Event {
-                at: now(),
-                kind: EventKind::Waiver { item_id: id, waived },
             });
             Ok(())
         })

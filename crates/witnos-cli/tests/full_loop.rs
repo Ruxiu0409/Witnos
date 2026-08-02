@@ -3,7 +3,7 @@
 //!
 //! empty contract blocks → agent lays items → gate blocks with the delta →
 //! interpret/evidence/oracle/reconcile → gate releases (goal parks awaiting
-//! rulings) → human edits mid-run (marker mirrors the bump) → delivery
+//! the human) → human edits mid-run (marker mirrors the bump) → delivery
 //! injects the delta → gate blocks again.
 
 use std::io::Write;
@@ -358,18 +358,21 @@ fn auto_mode_gates_each_session_against_its_own_goal() {
     );
 }
 
-/// Sending an item back must reach an agent that is still RUNNING — through the
-/// delivery channel, like any other contract move — instead of waiting at the
-/// gate for it to try to stop. That means the version bumps, the marker mirrors
-/// the bump (or the delivery channel's local check would never look), and the
-/// delta says "sent back" rather than reading as a fresh edit.
+/// Disagreeing with a laid item must reach an agent that is still RUNNING —
+/// through the delivery channel, like any other contract move — instead of
+/// waiting at the gate for it to try to stop. Send-back was removed on
+/// 2026-08-02, so the lever here is an edit, and the case that matters is the
+/// one send-back used to own: the human re-saves the item WITHOUT changing a
+/// word, meaning "your evidence doesn't answer this". The version must still
+/// bump, the marker must mirror the bump (or the delivery channel's local check
+/// would never look), and the item must land in the delta.
 #[test]
-fn rejection_reaches_a_running_agent_through_the_delivery_channel() {
+fn disagreement_reaches_a_running_agent_through_the_delivery_channel() {
     let home = temp_dir("rej-home");
     let project = temp_dir("rej-project");
     let core = start_core(&home);
 
-    let goal = core.post("/goals", json!({"title": "rejection demo"}));
+    let goal = core.post("/goals", json!({"title": "disagreement demo"}));
     let gid = goal["id"].as_str().unwrap().to_string();
     core.post(
         &format!("/goals/{gid}/watch"),
@@ -406,10 +409,10 @@ fn rejection_reaches_a_running_agent_through_the_delivery_channel() {
     // Delivery is quiet: the agent has seen everything.
     assert_eq!(hook("post-tool-use", &project, &home).trim(), "");
 
-    // The human sends it back after opening the evidence original.
+    // The human disagrees, keeping the criterion exactly as it stands.
     core.post(
-        &format!("/goals/{gid}/rulings"),
-        json!({"item_id": item, "after_drill_down": true}),
+        &format!("/goals/{gid}/items/{item}/edit"),
+        json!({"actor": "human", "claim": "UI feels calm"}),
     );
     let m: Value = serde_json::from_str(
         &std::fs::read_to_string(project.join(".witnos/armed.json")).unwrap(),
@@ -417,19 +420,18 @@ fn rejection_reaches_a_running_agent_through_the_delivery_channel() {
     .unwrap();
     assert_eq!(
         m["default_goal"]["contract_version"], 2,
-        "the marker must mirror the rejection's bump, or delivery never looks: {m}"
+        "the marker must mirror the bump, or delivery never looks: {m}"
     );
 
-    // …and the running agent is told, in the same delta channel as an edit.
+    // …and the running agent is told, through the delta channel.
     let out = hook("post-tool-use", &project, &home);
     assert!(out.contains("additionalContext"), "got: {out}");
     assert!(out.contains("UI feels calm"), "got: {out}");
-    assert!(out.contains("SENT BACK"), "the delta must read as a rejection: {out}");
 
-    // The gate holds too, with the wording that steers best.
+    // The gate holds too: the item is open again and its evidence is stale.
     let out = hook("stop", &project, &home);
     assert!(out.contains(r#""decision":"block""#), "got: {out}");
-    assert!(out.contains("rejected by the human"), "got: {out}");
+    assert!(out.contains("not laid"), "got: {out}");
 
     // Fresh evidence + reconcile → released again.
     core.post(
@@ -444,17 +446,91 @@ fn rejection_reaches_a_running_agent_through_the_delivery_channel() {
     core.post(&format!("/goals/{gid}/reconcile"), json!({"to_version": 2}));
     assert_eq!(hook("stop", &project, &home).trim(), "", "re-laid → release");
 
-    // The anti-rubber-stamping signal is on the record.
+    // The disagreement is on the record, attributed to the human. (Its
+    // `after_drill_down` flag is false here by construction: HTTP is the
+    // agent's surface, and only the IPC path a human clicks through can know
+    // they opened an evidence original first — core.rs covers that.)
     let events = core.get(&format!("/goals/{gid}"))["events"]
         .as_array()
         .unwrap()
         .clone();
-    let ruling = events
-        .iter()
-        .find(|e| e["kind"] == "ruling")
-        .expect("the ruling must be recorded");
-    assert_eq!(ruling["after_drill_down"], true, "got: {ruling}");
-    assert_eq!(ruling["verdict"], "rejected", "got: {ruling}");
+    assert!(
+        events
+            .iter()
+            .any(|e| e["kind"] == "contract_edited" && e["by"] == "human"),
+        "got: {events:?}"
+    );
+}
+
+/// The human's other lever: take the item out of the contract. A deleted row
+/// cannot appear in `items_since`, so without the deletion half of the delta the
+/// agent would go on producing evidence for a criterion nobody holds and learn
+/// better only by hitting `ItemNotFound`. Driven through the store rather than
+/// HTTP on purpose — deleting is a human action and lives on IPC only, the same
+/// rule that keeps an agent from excusing itself from a check.
+#[test]
+fn deletion_reaches_a_running_agent_through_the_delivery_channel() {
+    let home = temp_dir("del-home");
+    let project = temp_dir("del-project");
+    let core = start_core(&home);
+
+    let goal = core.post("/goals", json!({"title": "deletion demo"}));
+    let gid = goal["id"].as_str().unwrap().to_string();
+    core.post(
+        &format!("/goals/{gid}/watch"),
+        json!({"project_dir": project.to_str().unwrap()}),
+    );
+    core.post(
+        &format!("/goals/{gid}/items"),
+        json!({"actor": "agent", "items": [
+            {"claim": "UI feels calm", "check": "look at it", "origin": {"kind": "agent_initial"}},
+            {"claim": "the part they don't want checked", "check": "…", "origin": {"kind": "agent_blindspot"}}
+        ]}),
+    );
+    let items = core.get(&format!("/goals/{gid}"))["items"].clone();
+    let keep = items[0]["id"].as_str().unwrap().to_string();
+    let drop_it = items[1]["id"].as_str().unwrap().to_string();
+    for id in [&keep, &drop_it] {
+        core.post(
+            &format!("/goals/{gid}/interpret"),
+            json!({"item_id": id, "text": "how I read it"}),
+        );
+        core.post(
+            &format!("/goals/{gid}/evidence"),
+            json!({
+                "item_id": id,
+                "conclusion": "holds",
+                "basis": "static layout",
+                "provenance": [{"kind": "command", "cmd": "screencapture -x shot.png"}],
+            }),
+        );
+    }
+    core.post(&format!("/goals/{gid}/reconcile"), json!({"to_version": 2}));
+    assert_eq!(hook("stop", &project, &home).trim(), "", "should release");
+    assert_eq!(hook("post-tool-use", &project, &home).trim(), "", "nothing new");
+
+    core.state.store.delete_item(&gid, &drop_it).unwrap();
+    witnos_server::resync_dir(&core.state, project.to_str().unwrap());
+
+    // The running agent is told to stop — by claim, since the id now names
+    // nothing — and the surviving item is NOT dragged back into the delta.
+    let out = hook("post-tool-use", &project, &home);
+    assert!(out.contains("REMOVED"), "got: {out}");
+    assert!(out.contains("the part they don't want checked"), "got: {out}");
+    assert!(!out.contains("UI feels calm"), "untouched items stay out: {out}");
+
+    // One reconcile round is the whole cost: nothing else is outstanding.
+    let out = hook("stop", &project, &home);
+    assert!(out.contains(r#""decision":"block""#), "got: {out}");
+    assert!(out.contains("contract moved"), "got: {out}");
+    core.post(&format!("/goals/{gid}/reconcile"), json!({"to_version": 3}));
+    assert_eq!(hook("stop", &project, &home).trim(), "", "released");
+
+    // The evidence went with the item; the survivor's is untouched.
+    let g = core.get(&format!("/goals/{gid}"));
+    assert_eq!(g["items"].as_array().unwrap().len(), 1);
+    assert_eq!(g["evidence"].as_array().unwrap().len(), 1);
+    assert_eq!(g["evidence"][0]["item_id"], keep);
 }
 
 /// Mid-run /clear (or closed terminal) must not leave a zombie "running"

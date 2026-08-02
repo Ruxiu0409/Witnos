@@ -3,9 +3,9 @@
 //! Gate release ≠ the human agreeing: the agent never waits for a human, so
 //! release requires only that every subjective item is LAID (interpretation +
 //! fresh evidence), every objective item is PASSED, and the agent has
-//! reconciled against the latest contract. The human's lever is editing the
-//! contract or sending an item back — both of which move the version and land
-//! right back here.
+//! reconciled against the latest contract. The human's levers are editing an
+//! item and deleting it — both of which move the version and land right back
+//! here.
 
 use crate::types::*;
 
@@ -24,8 +24,10 @@ pub fn evaluate(goal: &Goal) -> GateOutcome {
     }
 
     for item in &goal.items {
-        // The human opted this one out: not blocked on, no evidence demanded,
-        // not even mentioned — per-goal opt-out narrowed to a single item.
+        // Legacy waived item (the opt-out is a deletion since 2026-08-02):
+        // not blocked on, no evidence demanded, not even mentioned. Loading an
+        // old goal must not re-arm the gate against a check its owner already
+        // opted out of, so this skip outlives the action that produced it.
         if item.status == ItemStatus::Waived {
             continue;
         }
@@ -61,10 +63,6 @@ pub fn evaluate(goal: &Goal) -> GateOutcome {
                         ));
                     }
                 }
-                ItemStatus::Rejected => reasons.push(format!(
-                    "item was rejected by the human and not yet re-addressed: \"{}\"",
-                    item.claim
-                )),
                 _ => reasons.push(format!(
                     "subjective item not laid (needs interpretation + evidence): \"{}\"",
                     item.claim
